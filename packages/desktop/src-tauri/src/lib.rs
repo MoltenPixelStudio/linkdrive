@@ -9,7 +9,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fs_cmds::ls,
             fs_cmds::stat,
+            fs_cmds::read_text,
             fs_cmds::read_chunk,
+            fs_cmds::mkdir,
+            fs_cmds::rename,
+            fs_cmds::delete_path,
+            fs_cmds::home_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LinkDrive");

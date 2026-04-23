@@ -20,6 +20,7 @@ tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+dirs = "5"
 # Phase 3: SFTP/SSH client
 # russh = "0.45"
 # russh-sftp = "2"
