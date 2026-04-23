@@ -296,6 +296,165 @@ pub async fn ssh_read_text(
 }
 
 #[tauri::command]
+pub async fn ssh_mkdir(app: AppHandle, host_id: String, path: String) -> Result<(), String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+    handle
+        .sftp
+        .create_dir(&path)
+        .await
+        .map_err(|e| format!("mkdir: {e}"))
+}
+
+#[tauri::command]
+pub async fn ssh_rename(
+    app: AppHandle,
+    host_id: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+    handle
+        .sftp
+        .rename(&from, &to)
+        .await
+        .map_err(|e| format!("rename: {e}"))
+}
+
+#[tauri::command]
+pub async fn ssh_delete_path(
+    app: AppHandle,
+    host_id: String,
+    path: String,
+    recursive: bool,
+) -> Result<(), String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+    let meta = handle
+        .sftp
+        .metadata(&path)
+        .await
+        .map_err(|e| format!("stat: {e}"))?;
+    if meta.is_dir() {
+        if recursive {
+            ssh_rmdir_recursive(&handle.sftp, &path).await?;
+        } else {
+            handle
+                .sftp
+                .remove_dir(&path)
+                .await
+                .map_err(|e| format!("rmdir: {e}"))?;
+        }
+    } else {
+        handle
+            .sftp
+            .remove_file(&path)
+            .await
+            .map_err(|e| format!("unlink: {e}"))?;
+    }
+    Ok(())
+}
+
+async fn ssh_rmdir_recursive(sftp: &SftpSession, path: &str) -> Result<(), String> {
+    let mut stack: Vec<String> = vec![path.to_string()];
+    let mut post: Vec<String> = Vec::new();
+    while let Some(p) = stack.pop() {
+        let mut rd = sftp
+            .read_dir(&p)
+            .await
+            .map_err(|e| format!("read_dir: {e}"))?;
+        while let Some(e) = rd.next() {
+            let name = e.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let child = join_posix(&p, &name);
+            if e.file_type() == FileType::Dir {
+                stack.push(child.clone());
+            } else {
+                sftp.remove_file(&child)
+                    .await
+                    .map_err(|e| format!("unlink {child}: {e}"))?;
+            }
+        }
+        post.push(p);
+    }
+    for p in post.into_iter().rev() {
+        sftp.remove_dir(&p)
+            .await
+            .map_err(|e| format!("rmdir {p}: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ssh_dir_size(
+    app: AppHandle,
+    host_id: String,
+    path: String,
+) -> Result<u64, String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+    let mut stack: Vec<String> = vec![path];
+    let mut total: u64 = 0;
+    while let Some(p) = stack.pop() {
+        let mut rd = match handle.sftp.read_dir(&p).await {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        while let Some(e) = rd.next() {
+            let name = e.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let ft = e.file_type();
+            let child = join_posix(&p, &name);
+            if ft == FileType::Symlink {
+                continue;
+            }
+            if ft == FileType::Dir {
+                stack.push(child);
+            } else {
+                total = total.saturating_add(e.metadata().size.unwrap_or(0));
+            }
+        }
+    }
+    Ok(total)
+}
+
+// Returns raw bytes of a file, capped at MAX_READ_BYTES to avoid blowing the
+// renderer's memory on accidental huge-file reads. Used for image previews
+// (base64 data URLs) and similar small reads.
+const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
+
+#[tauri::command]
+pub async fn ssh_read_bytes(
+    app: AppHandle,
+    host_id: String,
+    path: String,
+) -> Result<Vec<u8>, String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+    let meta = handle
+        .sftp
+        .metadata(&path)
+        .await
+        .map_err(|e| format!("stat: {e}"))?;
+    if meta.size.unwrap_or(0) > MAX_READ_BYTES {
+        return Err(format!(
+            "file too large ({} bytes, max {MAX_READ_BYTES})",
+            meta.size.unwrap_or(0)
+        ));
+    }
+    handle
+        .sftp
+        .read(&path)
+        .await
+        .map_err(|e| format!("read: {e}"))
+}
+
+#[tauri::command]
 pub async fn ssh_home(app: AppHandle, host_id: String) -> Result<String, String> {
     let sess = session_for(&app, &host_id).await?;
     let handle = sess.lock().await;

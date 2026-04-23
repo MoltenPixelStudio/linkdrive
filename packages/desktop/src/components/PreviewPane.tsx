@@ -3,6 +3,7 @@ import { FileText, FileImage, File, FileVideo } from 'lucide-react';
 import type { Entry } from '@linkdrive/shared/types';
 import { extname, formatBytes } from '@linkdrive/shared/paths';
 import type { Source } from '../utils/source';
+import { sshReadBytes } from '../utils/source';
 
 const IMG = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const VID = new Set(['.mp4', '.mov', '.mkv', '.webm']);
@@ -48,7 +49,42 @@ export function PreviewPane({
     };
   }, [entry?.path, kind, source]);
 
-  const mediaUrl = entry && source.fileUrl ? source.fileUrl(entry.path) : null;
+  // Local: synchronous asset:// URL. SFTP: fetch bytes and hand out a blob URL.
+  const [remoteMediaUrl, setRemoteMediaUrl] = useState<string | null>(null);
+  const [remoteMediaErr, setRemoteMediaErr] = useState<string | null>(null);
+  useEffect(() => {
+    setRemoteMediaUrl(null);
+    setRemoteMediaErr(null);
+    if (!entry) return;
+    if (source.kind !== 'sftp') return;
+    if (kind !== 'image' && kind !== 'video') return;
+    let cancelled = false;
+    let urlToRevoke: string | null = null;
+    (async () => {
+      try {
+        const bytes = await sshReadBytes(source.id, entry.path);
+        if (cancelled) return;
+        const blob = new Blob([bytes.buffer as ArrayBuffer]);
+        const url = URL.createObjectURL(blob);
+        urlToRevoke = url;
+        setRemoteMediaUrl(url);
+      } catch (e) {
+        if (!cancelled) {
+          setRemoteMediaErr(typeof e === 'string' ? e : (e as Error)?.message ?? 'load failed');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (urlToRevoke) URL.revokeObjectURL(urlToRevoke);
+    };
+  }, [entry?.path, kind, source.kind, source.id]);
+
+  const mediaUrl = entry
+    ? source.fileUrl
+      ? source.fileUrl(entry.path)
+      : remoteMediaUrl
+    : null;
 
   if (!entry) {
     return (
@@ -72,9 +108,14 @@ export function PreviewPane({
             className="max-w-full max-h-full object-contain mx-auto rounded-md border border-ld-border-subtle"
           />
         )}
-        {kind === 'image' && !mediaUrl && (
+        {kind === 'image' && !mediaUrl && !remoteMediaErr && (
           <div className="text-xs text-ld-text-dim text-center py-8">
-            Image preview over SFTP is coming soon.
+            Loading image…
+          </div>
+        )}
+        {kind === 'image' && remoteMediaErr && (
+          <div className="text-xs text-ld-text-dim text-center py-8">
+            Couldn&apos;t load image: {remoteMediaErr}
           </div>
         )}
         {kind === 'video' && mediaUrl && (
@@ -84,9 +125,14 @@ export function PreviewPane({
             className="max-w-full max-h-full mx-auto rounded-md border border-ld-border-subtle"
           />
         )}
-        {kind === 'video' && !mediaUrl && (
+        {kind === 'video' && !mediaUrl && !remoteMediaErr && (
           <div className="text-xs text-ld-text-dim text-center py-8">
-            Video preview over SFTP is coming soon.
+            Loading video…
+          </div>
+        )}
+        {kind === 'video' && remoteMediaErr && (
+          <div className="text-xs text-ld-text-dim text-center py-8">
+            Couldn&apos;t load video: {remoteMediaErr}
           </div>
         )}
         {kind === 'text' && (

@@ -84,7 +84,18 @@ export function sftpSource(hostId: string, label: string): Source {
       fromSsh(await invoke<RustSshEntry>('ssh_stat', { hostId, path })),
     readText: (path) => invoke<string>('ssh_read_text', { hostId, path }),
     home: () => invoke<string>('ssh_home', { hostId }),
+    mkdir: (path) => invoke<void>('ssh_mkdir', { hostId, path }),
+    rename: (from, to) => invoke<void>('ssh_rename', { hostId, from, to }),
+    deletePath: (path, recursive = false) =>
+      invoke<void>('ssh_delete_path', { hostId, path, recursive }),
+    dirSize: (path) => invoke<number>('ssh_dir_size', { hostId, path }),
   };
+}
+
+// Helper for callers that need raw bytes of a remote file (preview panes etc.)
+export async function sshReadBytes(hostId: string, path: string): Promise<Uint8Array> {
+  const arr = await invoke<number[]>('ssh_read_bytes', { hostId, path });
+  return new Uint8Array(arr);
 }
 
 // ---- SSH commands (for host management) ----

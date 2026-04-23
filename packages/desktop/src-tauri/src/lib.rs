@@ -45,7 +45,12 @@ pub fn run() {
             sftp::ssh_ls,
             sftp::ssh_stat,
             sftp::ssh_read_text,
+            sftp::ssh_read_bytes,
             sftp::ssh_home,
+            sftp::ssh_mkdir,
+            sftp::ssh_rename,
+            sftp::ssh_delete_path,
+            sftp::ssh_dir_size,
         ])
         .setup(move |app| {
             let Some(window) = app.get_webview_window("main") else {
