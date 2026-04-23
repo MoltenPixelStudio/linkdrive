@@ -1,32 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import {
-  ArrowUp,
-  ArrowDown,
-  Eye,
-  EyeOff,
-  ChevronDown,
-  Columns3,
-  Layers,
-  FolderTree,
-  Check,
-} from 'lucide-react';
+import { ArrowUp, ArrowDown, ChevronDown, Columns3 } from 'lucide-react';
 import type { Entry } from '@linkdrive/shared/types';
 import { formatBytes } from '@linkdrive/shared/paths';
 import type { Column, ColumnId } from '../types/explorer';
 import { FileIcon } from './FileIcon';
 import { typeLabel, formatDate, kindOf, type DateFormat, type FileKind } from '../utils/fileMeta';
-import { useFolderSizes } from '../utils/useFolderSizes';
 import { ColumnsMenu } from './ColumnsMenu';
 
 export type GroupBy = 'none' | 'type' | 'date' | 'size';
-
-const GROUPS: { id: GroupBy; label: string }[] = [
-  { id: 'none', label: 'No grouping' },
-  { id: 'type', label: 'Type' },
-  { id: 'date', label: 'Date modified' },
-  { id: 'size', label: 'Size' },
-];
 
 type SortState = { key: ColumnId; dir: 'asc' | 'desc' };
 type Group = { id: string; label: string; count: number; entries: Entry[] };
@@ -67,21 +48,30 @@ function bucketByDate(mtime: number, now: number): { id: string; label: string; 
   return { id: 'g-older', label: 'Older', order: 6 };
 }
 
-function bucketBySize(bytes: number, isDir: boolean): { id: string; label: string; order: number } {
-  if (isDir) return { id: 'a-folder', label: 'Folders', order: 0 };
+function bucketBySize(
+  bytes: number,
+  isDir: boolean,
+  folderSize: number | undefined,
+): { id: string; label: string; order: number } {
+  const size = isDir ? (folderSize ?? 0) : bytes;
   const KB = 1024,
     MB = KB * 1024,
     GB = MB * 1024;
-  if (bytes === 0) return { id: 'z-empty', label: 'Empty', order: 7 };
-  if (bytes < 16 * KB) return { id: 'b-tiny', label: 'Tiny (< 16 KB)', order: 1 };
-  if (bytes < MB) return { id: 'c-small', label: 'Small (< 1 MB)', order: 2 };
-  if (bytes < 16 * MB) return { id: 'd-medium', label: 'Medium (< 16 MB)', order: 3 };
-  if (bytes < 128 * MB) return { id: 'e-large', label: 'Large (< 128 MB)', order: 4 };
-  if (bytes < GB) return { id: 'f-huge', label: 'Huge (< 1 GB)', order: 5 };
+  if (isDir && folderSize === undefined) return { id: 'z-pending', label: 'Computing…', order: 8 };
+  if (size === 0) return { id: 'z-empty', label: 'Empty', order: 7 };
+  if (size < 16 * KB) return { id: 'b-tiny', label: 'Tiny (< 16 KB)', order: 1 };
+  if (size < MB) return { id: 'c-small', label: 'Small (< 1 MB)', order: 2 };
+  if (size < 16 * MB) return { id: 'd-medium', label: 'Medium (< 16 MB)', order: 3 };
+  if (size < 128 * MB) return { id: 'e-large', label: 'Large (< 128 MB)', order: 4 };
+  if (size < GB) return { id: 'f-huge', label: 'Huge (< 1 GB)', order: 5 };
   return { id: 'g-giant', label: 'Giant (≥ 1 GB)', order: 6 };
 }
 
-function groupEntries(entries: Entry[], groupBy: GroupBy): Group[] {
+function groupEntries(
+  entries: Entry[],
+  groupBy: GroupBy,
+  folderSizes: Map<string, number>,
+): Group[] {
   if (groupBy === 'none') {
     return [{ id: 'all', label: '', count: entries.length, entries }];
   }
@@ -95,7 +85,9 @@ function groupEntries(entries: Entry[], groupBy: GroupBy): Group[] {
     } else if (groupBy === 'date') {
       key = bucketByDate(e.mtime, now);
     } else {
-      key = bucketBySize(e.size, e.isDir);
+      const fs = e.isDir ? folderSizes.get(e.path) : e.size;
+      const resolved = fs === -1 ? 0 : fs;
+      key = bucketBySize(e.size, e.isDir, resolved);
     }
     const slot = buckets.get(key.id) ?? { label: key.label, order: key.order, entries: [] };
     slot.entries.push(e);
@@ -128,7 +120,7 @@ export function FileDetails({
   onToggleFoldersFirst,
   dateFormat,
   onDateFormatChange,
-  selectedCount,
+  folderSizes,
 }: {
   entries: Entry[];
   columns: Column[];
@@ -147,7 +139,7 @@ export function FileDetails({
   onToggleFoldersFirst: () => void;
   dateFormat: DateFormat;
   onDateFormatChange: (f: DateFormat) => void;
-  selectedCount: number;
+  folderSizes: Map<string, number>;
 }) {
   const visibleCols = columns.filter((c) => c.visible);
   const gridTemplate = visibleCols
@@ -156,26 +148,24 @@ export function FileDetails({
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [colsAnchor, setColsAnchor] = useState<{ x: number; y: number } | null>(null);
-  const [groupAnchor, setGroupAnchor] = useState<{ x: number; y: number } | null>(null);
   const colsBtnRef = useRef<HTMLButtonElement>(null);
-  const groupBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (!colsAnchor && !groupAnchor) return;
+    if (!colsAnchor) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (colsBtnRef.current?.contains(t) || groupBtnRef.current?.contains(t)) return;
+      if (colsBtnRef.current?.contains(t)) return;
       if ((t as HTMLElement).closest?.('[data-cols-menu]')) return;
-      if ((t as HTMLElement).closest?.('[data-pop]')) return;
       setColsAnchor(null);
-      setGroupAnchor(null);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [colsAnchor, groupAnchor]);
+  }, [colsAnchor]);
 
-  const groups = useMemo(() => groupEntries(entries, groupBy), [entries, groupBy]);
-  const folderSizes = useFolderSizes(entries);
+  const groups = useMemo(
+    () => groupEntries(entries, groupBy, folderSizes),
+    [entries, groupBy, folderSizes],
+  );
 
   const startResize = (colId: ColumnId, startX: number, startWidth: number) => {
     const onMove = (ev: MouseEvent) => {
@@ -212,8 +202,6 @@ export function FileDetails({
     });
   };
 
-  const currentGroup = GROUPS.find((g) => g.id === groupBy) ?? GROUPS[0];
-
   return (
     <div className="flex-1 overflow-auto" onContextMenu={(e) => onContextMenu(e, null)}>
       {/* Column header */}
@@ -234,7 +222,7 @@ export function FileDetails({
               ? 'bg-ld-elevated text-ld-text'
               : 'text-ld-text-dim hover:text-ld-text hover:bg-ld-elevated',
           ].join(' ')}
-          title="Add or remove columns"
+          title="View options and columns"
         >
           <Columns3 size={13} />
         </button>
@@ -244,8 +232,7 @@ export function FileDetails({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            const r = (e.target as HTMLElement).getBoundingClientRect?.();
-            setColsAnchor({ x: e.clientX, y: r ? r.bottom + 4 : e.clientY + 4 });
+            setColsAnchor({ x: e.clientX, y: e.clientY + 4 });
           }}
         >
           {visibleCols.map((c) => (
@@ -258,66 +245,6 @@ export function FileDetails({
             />
           ))}
         </div>
-      </div>
-
-      {/* Options strip — generic (not column-specific) controls */}
-      <div
-        className="sticky z-10 bg-ld-body/95 backdrop-blur border-b border-ld-border-subtle flex items-center gap-2 px-3 h-7 shrink-0 text-[11px] text-ld-text-muted"
-        style={{ top: 32 }}
-      >
-        <span>
-          {entries.length} item{entries.length === 1 ? '' : 's'}
-          {selectedCount > 0 && (
-            <span className="ml-2 text-brand-red font-medium">{selectedCount} selected</span>
-          )}
-        </span>
-
-        <div className="flex-1" />
-
-        <button
-          ref={groupBtnRef}
-          onClick={(e) => {
-            if (groupAnchor) {
-              setGroupAnchor(null);
-              return;
-            }
-            const r = e.currentTarget.getBoundingClientRect();
-            setGroupAnchor({ x: r.right - 200, y: r.bottom + 4 });
-          }}
-          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md hover:bg-ld-elevated hover:text-ld-text transition-colors"
-          title="Group by"
-        >
-          <Layers size={11} />
-          <span>Group: {currentGroup.label}</span>
-        </button>
-
-        <button
-          onClick={onToggleFoldersFirst}
-          className={[
-            'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md transition-colors',
-            foldersFirst
-              ? 'bg-brand-red/15 text-brand-red'
-              : 'hover:bg-ld-elevated hover:text-ld-text',
-          ].join(' ')}
-          title={foldersFirst ? 'Folders first. Click to mix.' : 'Mixed. Click to put folders first.'}
-        >
-          <FolderTree size={11} />
-          <span>{foldersFirst ? 'Folders first' : 'Mixed'}</span>
-        </button>
-
-        <button
-          onClick={onToggleHidden}
-          className={[
-            'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md transition-colors',
-            showHidden
-              ? 'bg-brand-red/15 text-brand-red'
-              : 'hover:bg-ld-elevated hover:text-ld-text',
-          ].join(' ')}
-          title={showHidden ? 'Hide dotfiles' : 'Show dotfiles'}
-        >
-          {showHidden ? <Eye size={11} /> : <EyeOff size={11} />}
-          <span>Hidden</span>
-        </button>
       </div>
 
       {/* Groups / rows */}
@@ -394,32 +321,14 @@ export function FileDetails({
           onToggle={toggleCol}
           dateFormat={dateFormat}
           onDateFormatChange={onDateFormatChange}
+          groupBy={groupBy}
+          onGroupChange={onGroupChange}
+          showHidden={showHidden}
+          onToggleHidden={onToggleHidden}
+          foldersFirst={foldersFirst}
+          onToggleFoldersFirst={onToggleFoldersFirst}
         />
       )}
-
-      {groupAnchor &&
-        createPortal(
-          <div
-            data-pop
-            className="fixed z-50 w-[200px] rounded-lg border border-ld-border bg-ld-card shadow-xl py-1 animate-scale-in"
-            style={{ left: groupAnchor.x, top: groupAnchor.y }}
-          >
-            {GROUPS.map((g) => (
-              <button
-                key={g.id}
-                onClick={() => {
-                  onGroupChange(g.id);
-                  setGroupAnchor(null);
-                }}
-                className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-ld-text hover:bg-ld-elevated"
-              >
-                <span>{g.label}</span>
-                {g.id === groupBy && <Check size={12} className="text-brand-red" />}
-              </button>
-            ))}
-          </div>,
-          document.body,
-        )}
     </div>
   );
 }

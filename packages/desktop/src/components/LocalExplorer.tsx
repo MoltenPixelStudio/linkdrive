@@ -9,6 +9,7 @@ import { ContextMenu, useCtx, type MenuItem } from './ContextMenu';
 import { ls, homeDir, mkdir as mkdirCmd, deletePath, rename as renameCmd } from '../utils/fs';
 import type { GroupBy } from './FileDetails';
 import type { DateFormat } from '../utils/fileMeta';
+import { useFolderSizes } from '../utils/useFolderSizes';
 import { basename, dirname, extname } from '@linkdrive/shared/paths';
 import type { Entry } from '@linkdrive/shared/types';
 import {
@@ -71,13 +72,20 @@ function sortEntries(
   key: ColumnId,
   dir: 'asc' | 'desc',
   foldersFirst: boolean,
+  folderSizes: Map<string, number>,
 ): Entry[] {
   const mul = dir === 'asc' ? 1 : -1;
+  const sizeOf = (e: Entry): number => {
+    if (!e.isDir) return e.size;
+    const fs = folderSizes.get(e.path);
+    if (fs === undefined || fs < 0) return -1; // pending/denied → sort to bottom asc
+    return fs;
+  };
   return [...list].sort((a, b) => {
     if (foldersFirst && a.isDir !== b.isDir) return a.isDir ? -1 : 1;
     switch (key) {
       case 'size':
-        return (a.size - b.size) * mul;
+        return (sizeOf(a) - sizeOf(b)) * mul;
       case 'modified':
         return (a.mtime - b.mtime) * mul;
       case 'type':
@@ -105,6 +113,8 @@ export function LocalExplorer() {
 
   const [history, setHistory] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
+
+  const folderSizes = useFolderSizes(entries);
 
   const ctx = useCtx<Entry | null>();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -188,8 +198,8 @@ export function LocalExplorer() {
       if (q && !e.name.toLowerCase().includes(q)) return false;
       return true;
     });
-    return sortEntries(filtered, sort.key, sort.dir, foldersFirst);
-  }, [entries, query, showHidden, sort, foldersFirst]);
+    return sortEntries(filtered, sort.key, sort.dir, foldersFirst, folderSizes);
+  }, [entries, query, showHidden, sort, foldersFirst, folderSizes]);
 
   const selectedEntry = useMemo(
     () => visible.find((e) => e.path === selected) ?? null,
@@ -367,6 +377,10 @@ export function LocalExplorer() {
           />
         </div>
 
+        <span className="text-[11px] text-ld-text-muted shrink-0 mr-1">
+          {visible.length} item{visible.length === 1 ? '' : 's'}
+        </span>
+
         <ViewModeMenu mode={view} onChange={(m) => updateSetting('view', m)} />
       </header>
 
@@ -396,7 +410,7 @@ export function LocalExplorer() {
               onToggleFoldersFirst={() => updateSetting('foldersFirst', !foldersFirst)}
               dateFormat={dateFormat}
               onDateFormatChange={(f) => updateSetting('dateFormat', f)}
-              selectedCount={selected ? 1 : 0}
+              folderSizes={folderSizes}
             />
           ) : (
             <FileGrid
