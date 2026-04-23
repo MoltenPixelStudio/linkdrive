@@ -366,15 +366,17 @@ pub async fn run_uninstall(app: AppHandle) -> Result<(), String> {
 #[cfg(windows)]
 fn schedule_dir_cleanup(dir: &std::path::Path) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW hides the console window. DETACHED_PROCESS is
+    // mutually exclusive with CREATE_NO_WINDOW per MSDN — combining them
+    // actually makes the cmd window flash on screen. Use only CREATE_NO_WINDOW.
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    const DETACHED_PROCESS: u32 = 0x00000008;
     let cmd = format!(
         "ping 127.0.0.1 -n 3 > nul & rd /s /q \"{}\"",
         dir.display()
     );
     std::process::Command::new("cmd")
         .args(["/C", &cmd])
-        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()?;
     Ok(())
 }
