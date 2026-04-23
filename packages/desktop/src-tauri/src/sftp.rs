@@ -7,8 +7,10 @@ use base64::Engine;
 use russh::client::{self, Config as RusshConfig, Handle, Handler};
 use russh::keys::PublicKey;
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::FileType;
+use russh_sftp::protocol::{FileType, OpenFlags};
 use serde::Serialize;
+use tauri::Emitter;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -463,6 +465,193 @@ pub async fn ssh_home(app: AppHandle, host_id: String) -> Result<String, String>
         .canonicalize(".")
         .await
         .map_err(|e| format!("home: {e}"))
+}
+
+// ---- Transfers ----
+
+const CHUNK: usize = 64 * 1024;
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TransferEvent<'a> {
+    id: &'a str,
+    bytes: u64,
+    total: u64,
+    state: &'a str,
+    error: Option<String>,
+}
+
+fn emit_transfer(app: &AppHandle, id: &str, bytes: u64, total: u64, state: &str, error: Option<String>) {
+    let _ = app.emit(
+        "transfer:progress",
+        TransferEvent {
+            id,
+            bytes,
+            total,
+            state,
+            error,
+        },
+    );
+}
+
+#[tauri::command]
+pub async fn ssh_download_file(
+    app: AppHandle,
+    transfer_id: String,
+    host_id: String,
+    remote_path: String,
+    local_path: String,
+) -> Result<(), String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+
+    let meta = handle
+        .sftp
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| format!("stat: {e}"))?;
+    let total = meta.size.unwrap_or(0);
+
+    emit_transfer(&app, &transfer_id, 0, total, "running", None);
+
+    let mut remote = match handle
+        .sftp
+        .open_with_flags(&remote_path, OpenFlags::READ)
+        .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            let msg = format!("open remote: {e}");
+            emit_transfer(&app, &transfer_id, 0, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+    };
+
+    let mut local = match tokio::fs::File::create(&local_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            let msg = format!("create local: {e}");
+            emit_transfer(&app, &transfer_id, 0, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+    };
+
+    let mut buf = vec![0u8; CHUNK];
+    let mut sent: u64 = 0;
+    loop {
+        let n = match remote.read(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                let msg = format!("read: {e}");
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        if let Err(e) = local.write_all(&buf[..n]).await {
+            let msg = format!("write: {e}");
+            emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+        sent += n as u64;
+        emit_transfer(&app, &transfer_id, sent, total, "running", None);
+    }
+
+    if let Err(e) = local.flush().await {
+        let msg = format!("flush: {e}");
+        emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+        return Err(msg);
+    }
+
+    emit_transfer(&app, &transfer_id, sent, total, "completed", None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ssh_upload_file(
+    app: AppHandle,
+    transfer_id: String,
+    host_id: String,
+    local_path: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+
+    let meta = match tokio::fs::metadata(&local_path).await {
+        Ok(m) => m,
+        Err(e) => {
+            let msg = format!("stat local: {e}");
+            emit_transfer(&app, &transfer_id, 0, 0, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+    };
+    let total = meta.len();
+    emit_transfer(&app, &transfer_id, 0, total, "running", None);
+
+    let mut local = match tokio::fs::File::open(&local_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            let msg = format!("open local: {e}");
+            emit_transfer(&app, &transfer_id, 0, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+    };
+
+    let mut remote = match handle
+        .sftp
+        .open_with_flags(
+            &remote_path,
+            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+        )
+        .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            let msg = format!("open remote: {e}");
+            emit_transfer(&app, &transfer_id, 0, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+    };
+
+    let mut buf = vec![0u8; CHUNK];
+    let mut sent: u64 = 0;
+    loop {
+        let n = match local.read(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                let msg = format!("read local: {e}");
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        if let Err(e) = remote.write_all(&buf[..n]).await {
+            let msg = format!("write remote: {e}");
+            emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+        sent += n as u64;
+        emit_transfer(&app, &transfer_id, sent, total, "running", None);
+    }
+
+    if let Err(e) = remote.flush().await {
+        let msg = format!("flush remote: {e}");
+        emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+        return Err(msg);
+    }
+    if let Err(e) = remote.shutdown().await {
+        let msg = format!("close remote: {e}");
+        emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+        return Err(msg);
+    }
+
+    emit_transfer(&app, &transfer_id, sent, total, "completed", None);
+    Ok(())
 }
 
 #[tauri::command]

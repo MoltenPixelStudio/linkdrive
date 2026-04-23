@@ -14,6 +14,8 @@ import { StatusBar } from './StatusBar';
 import { basename, dirname, extname } from '@linkdrive/shared/paths';
 import type { Entry } from '@linkdrive/shared/types';
 import type { Source } from '../utils/source';
+import { useTransfers } from '../context/TransfersContext';
+import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   DEFAULT_COLUMNS,
   type Column,
@@ -123,6 +125,8 @@ export function Explorer({ source }: { source: Source }) {
   const needsFolderSizes =
     sizeColumnVisible || sort.key === 'size' || groupBy === 'size';
   const folderSizes = useFolderSizes(entries, needsFolderSizes, source.id, source.dirSize);
+
+  const { startDownload, startUpload } = useTransfers();
 
   const ctx = useCtx<Entry | null>();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -329,6 +333,29 @@ export function Explorer({ source }: { source: Source }) {
     navigator.clipboard?.writeText(e.path).catch(() => {});
   };
 
+  const onDownload = async (e: Entry) => {
+    if (source.kind !== 'sftp' || e.isDir) return;
+    const picked = await saveDialog({
+      defaultPath: e.name,
+      title: `Download ${e.name}`,
+    }).catch(() => null);
+    if (typeof picked !== 'string' || !picked) return;
+    startDownload(source.id, e.path, picked);
+  };
+
+  const onUpload = async () => {
+    if (source.kind !== 'sftp') return;
+    const picked = await openDialog({
+      multiple: false,
+      directory: false,
+      title: 'Upload file',
+    }).catch(() => null);
+    if (typeof picked !== 'string' || !picked) return;
+    const name = picked.split(/[\\/]/).pop() ?? 'upload';
+    const remotePath = path.endsWith('/') ? `${path}${name}` : `${path}/${name}`;
+    startUpload(source.id, picked, remotePath);
+  };
+
   const menuItemsForEntry = (e: Entry): MenuItem[] => [
     { id: 'open', label: e.isDir ? 'Open' : 'Preview', onSelect: () => onOpen(e) },
     { id: 'sep1', type: 'separator' },
@@ -346,6 +373,15 @@ export function Explorer({ source }: { source: Source }) {
       disabled: e.path === path,
       onSelect: () => navigate(dirname(e.path)),
     },
+    ...(source.kind === 'sftp' && !e.isDir
+      ? [
+          {
+            id: 'download',
+            label: 'Download…',
+            onSelect: () => onDownload(e),
+          } as MenuItem,
+        ]
+      : []),
     { id: 'sep2', type: 'separator' },
     {
       id: 'delete',
@@ -375,6 +411,15 @@ export function Explorer({ source }: { source: Source }) {
     },
     { id: 'sep1', type: 'separator' },
     { id: 'refresh', label: 'Refresh', shortcut: 'F5', onSelect: () => load(path, true) },
+    ...(source.kind === 'sftp'
+      ? [
+          {
+            id: 'upload',
+            label: 'Upload file…',
+            onSelect: onUpload,
+          } as MenuItem,
+        ]
+      : []),
     { id: 'paste', label: 'Paste', disabled: true, onSelect: () => {} },
     { id: 'sep2', type: 'separator' },
     {

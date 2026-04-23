@@ -51,6 +51,8 @@ pub fn run() {
             sftp::ssh_rename,
             sftp::ssh_delete_path,
             sftp::ssh_dir_size,
+            sftp::ssh_download_file,
+            sftp::ssh_upload_file,
         ])
         .setup(move |app| {
             let Some(window) = app.get_webview_window("main") else {
