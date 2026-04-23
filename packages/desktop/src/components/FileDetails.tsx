@@ -121,6 +121,8 @@ export function FileDetails({
   dateFormat,
   onDateFormatChange,
   folderSizes,
+  rowAnimations,
+  onToggleRowAnimations,
 }: {
   entries: Entry[];
   columns: Column[];
@@ -140,6 +142,8 @@ export function FileDetails({
   dateFormat: DateFormat;
   onDateFormatChange: (f: DateFormat) => void;
   folderSizes: Map<string, number>;
+  rowAnimations: boolean;
+  onToggleRowAnimations: () => void;
 }) {
   const visibleCols = columns.filter((c) => c.visible);
   const gridTemplate = visibleCols
@@ -149,6 +153,30 @@ export function FileDetails({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [colsAnchor, setColsAnchor] = useState<{ x: number; y: number } | null>(null);
   const colsBtnRef = useRef<HTMLButtonElement>(null);
+
+  // Virtualization — active only when flat (no groups) and list is big.
+  const ROW_HEIGHT = 28;
+  const OVERSCAN = 12;
+  const VIRT_THRESHOLD = 200;
+  const outerRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState({ scroll: 0, height: 600 });
+
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      setViewport((v) => ({ ...v, scroll: el.scrollTop }));
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = new ResizeObserver((entries) => {
+      setViewport((v) => ({ ...v, height: entries[0].contentRect.height }));
+    });
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (!colsAnchor) return;
@@ -202,8 +230,21 @@ export function FileDetails({
     });
   };
 
+  const canVirtualize = groupBy === 'none' && entries.length > VIRT_THRESHOLD;
+  const flat = groups[0]?.entries ?? [];
+  const totalHeight = flat.length * ROW_HEIGHT;
+  const startIdx = Math.max(0, Math.floor(viewport.scroll / ROW_HEIGHT) - OVERSCAN);
+  const endIdx = Math.min(
+    flat.length,
+    Math.ceil((viewport.scroll + viewport.height) / ROW_HEIGHT) + OVERSCAN,
+  );
+
   return (
-    <div className="flex-1 overflow-auto" onContextMenu={(e) => onContextMenu(e, null)}>
+    <div
+      ref={outerRef}
+      className="flex-1 overflow-auto"
+      onContextMenu={(e) => onContextMenu(e, null)}
+    >
       {/* Column header */}
       <div className="sticky top-0 z-10 bg-ld-body border-b border-ld-border-subtle flex items-stretch text-[11px] font-medium text-ld-text-dim select-none">
         <button
@@ -247,8 +288,57 @@ export function FileDetails({
         </div>
       </div>
 
-      {/* Groups / rows */}
-      {groups.map((g) => {
+      {/* Virtualized flat list — no groups, >200 entries */}
+      {canVirtualize && (
+        <div style={{ height: totalHeight, position: 'relative' }}>
+          <div
+            style={{
+              transform: `translateY(${startIdx * ROW_HEIGHT}px)`,
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: 0,
+            }}
+          >
+            {flat.slice(startIdx, endIdx).map((e) => {
+              const isSel = selected === e.path;
+              return (
+                <div
+                  key={e.path}
+                  onClick={() => onSelect(e.path)}
+                  onDoubleClick={() => onOpen(e)}
+                  onContextMenu={(ev) => onContextMenu(ev, e)}
+                  className={[
+                    'flex items-stretch text-xs border-b border-ld-border-subtle/40 cursor-default transition-colors',
+                    isSel ? 'bg-brand-red/10' : 'hover:bg-ld-elevated',
+                  ].join(' ')}
+                  style={{ height: ROW_HEIGHT }}
+                >
+                  <div className="w-8 shrink-0" />
+                  <div
+                    className="grid flex-1 min-w-0 items-center"
+                    style={{ gridTemplateColumns: gridTemplate }}
+                  >
+                    {visibleCols.map((c) => (
+                      <Cell
+                        key={c.id}
+                        col={c}
+                        entry={e}
+                        dateFormat={dateFormat}
+                        folderSize={folderSizes.get(e.path)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Grouped or small list — render all rows with stagger animation */}
+      {!canVirtualize &&
+        groups.map((g) => {
         const isCollapsed = collapsed.has(g.id);
         return (
           <div key={g.id} className="animate-fade-in">
@@ -284,10 +374,15 @@ export function FileDetails({
                       onDoubleClick={() => onOpen(e)}
                       onContextMenu={(ev) => onContextMenu(ev, e)}
                       className={[
-                        'flex items-stretch text-xs border-b border-ld-border-subtle/40 cursor-default transition-colors animate-fade-in',
+                        'flex items-stretch text-xs border-b border-ld-border-subtle/40 cursor-default transition-colors',
+                        rowAnimations ? 'animate-fade-quick' : '',
                         isSel ? 'bg-brand-red/10' : 'hover:bg-ld-elevated',
                       ].join(' ')}
-                      style={{ animationDelay: `${Math.min(i, 20) * 12}ms` }}
+                      style={
+                        rowAnimations
+                          ? { animationDelay: `${Math.min(i, 12) * 4}ms` }
+                          : undefined
+                      }
                     >
                       <div className="w-8 shrink-0" />
                       <div
@@ -327,6 +422,8 @@ export function FileDetails({
           onToggleHidden={onToggleHidden}
           foldersFirst={foldersFirst}
           onToggleFoldersFirst={onToggleFoldersFirst}
+          rowAnimations={rowAnimations}
+          onToggleRowAnimations={onToggleRowAnimations}
         />
       )}
     </div>

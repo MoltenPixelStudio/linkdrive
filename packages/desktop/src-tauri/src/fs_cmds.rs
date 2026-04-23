@@ -35,26 +35,36 @@ fn to_entry(name: String, path: PathBuf, md: &std::fs::Metadata, ft_symlink: boo
 #[tauri::command]
 pub async fn ls(path: String) -> Result<Vec<Entry>, String> {
     let p = PathBuf::from(&path);
-    let mut out = Vec::new();
+    // Phase 1: collect (name, path) tuples — cheap.
+    let mut stubs: Vec<(String, PathBuf)> = Vec::new();
     let mut rd = tokio::fs::read_dir(&p).await.map_err(|e| e.to_string())?;
     while let Some(e) = rd.next_entry().await.map_err(|e| e.to_string())? {
-        let md = match e.metadata().await {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let ft_symlink = e
-            .file_type()
-            .await
-            .map(|ft| ft.is_symlink())
-            .unwrap_or(false);
-        out.push(to_entry(
-            e.file_name().to_string_lossy().into_owned(),
-            e.path(),
-            &md,
-            ft_symlink,
-        ));
+        let name = e.file_name().to_string_lossy().into_owned();
+        stubs.push((name, e.path()));
     }
-    Ok(out)
+
+    // Phase 2: fan out symlink_metadata in parallel via JoinSet. On NTFS
+    // and large ext4 dirs this cuts ls latency roughly linearly up to
+    // the IO device's queue depth.
+    let mut set = tokio::task::JoinSet::new();
+    for (i, (name, path)) in stubs.into_iter().enumerate() {
+        set.spawn(async move {
+            let md = tokio::fs::symlink_metadata(&path).await.ok();
+            (i, name, path, md)
+        });
+    }
+
+    let mut indexed: Vec<(usize, Entry)> = Vec::new();
+    while let Some(res) = set.join_next().await {
+        let Ok((i, name, path, md)) = res else { continue };
+        let Some(md) = md else { continue };
+        let ft_symlink = md.file_type().is_symlink();
+        indexed.push((i, to_entry(name, path, &md, ft_symlink)));
+    }
+
+    // Preserve readdir order so repeat calls return stable results.
+    indexed.sort_by_key(|(i, _)| *i);
+    Ok(indexed.into_iter().map(|(_, e)| e).collect())
 }
 
 #[tauri::command]

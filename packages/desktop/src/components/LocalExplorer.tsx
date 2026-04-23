@@ -9,7 +9,8 @@ import { ContextMenu, useCtx, type MenuItem } from './ContextMenu';
 import { ls, homeDir, mkdir as mkdirCmd, deletePath, rename as renameCmd } from '../utils/fs';
 import type { GroupBy } from './FileDetails';
 import type { DateFormat } from '../utils/fileMeta';
-import { useFolderSizes } from '../utils/useFolderSizes';
+import { useFolderSizes, clearFolderSizeCache } from '../utils/useFolderSizes';
+import { StatusBar } from './StatusBar';
 import { basename, dirname, extname } from '@linkdrive/shared/paths';
 import type { Entry } from '@linkdrive/shared/types';
 import {
@@ -30,6 +31,7 @@ type Settings = {
   groupBy: GroupBy;
   dateFormat: DateFormat;
   foldersFirst: boolean;
+  rowAnimations: boolean;
 };
 
 function loadSettings(): Settings {
@@ -46,6 +48,7 @@ function loadSettings(): Settings {
         groupBy: parsed.groupBy ?? 'none',
         dateFormat: parsed.dateFormat ?? 'long',
         foldersFirst: parsed.foldersFirst ?? true,
+        rowAnimations: parsed.rowAnimations ?? true,
       };
     }
   } catch {}
@@ -58,6 +61,7 @@ function loadSettings(): Settings {
     groupBy: 'none',
     dateFormat: 'long',
     foldersFirst: true,
+    rowAnimations: true,
   };
 }
 
@@ -108,13 +112,28 @@ export function LocalExplorer() {
   const [query, setQuery] = useState('');
 
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
-  const { view, columns, showHidden, recursive, sort, groupBy, dateFormat, foldersFirst } =
-    settings;
+  const {
+    view,
+    columns,
+    showHidden,
+    recursive,
+    sort,
+    groupBy,
+    dateFormat,
+    foldersFirst,
+    rowAnimations,
+  } = settings;
 
   const [history, setHistory] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
 
-  const folderSizes = useFolderSizes(entries);
+  // Only compute folder sizes when something actually needs them: Size column
+  // visible, sorting by size, or grouping by size. Otherwise skip all the
+  // recursive walks — huge speedup on folders with node_modules/.git.
+  const sizeColumnVisible = columns.find((c) => c.id === 'size')?.visible ?? false;
+  const needsFolderSizes =
+    sizeColumnVisible || sort.key === 'size' || groupBy === 'size';
+  const folderSizes = useFolderSizes(entries, needsFolderSizes);
 
   const ctx = useCtx<Entry | null>();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -143,10 +162,11 @@ export function LocalExplorer() {
     })();
   }, [path]);
 
-  const load = useCallback(async (p: string) => {
+  const load = useCallback(async (p: string, bustCache = false) => {
     setLoading(true);
     setErr(null);
     try {
+      if (bustCache) clearFolderSizeCache();
       const list = await ls(p);
       setEntries(list);
       setSelected(null);
@@ -198,8 +218,18 @@ export function LocalExplorer() {
       if (q && !e.name.toLowerCase().includes(q)) return false;
       return true;
     });
+    // Only re-sort when folder sizes change if we're sorting by size.
+    // Otherwise ignore size map to skip unnecessary re-sort work.
     return sortEntries(filtered, sort.key, sort.dir, foldersFirst, folderSizes);
-  }, [entries, query, showHidden, sort, foldersFirst, folderSizes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    entries,
+    query,
+    showHidden,
+    sort,
+    foldersFirst,
+    sort.key === 'size' ? folderSizes : null,
+  ]);
 
   const selectedEntry = useMemo(
     () => visible.find((e) => e.path === selected) ?? null,
@@ -359,7 +389,7 @@ export function LocalExplorer() {
           <ChevronRight size={16} />
         </button>
         <button
-          onClick={() => load(path)}
+          onClick={() => load(path, true)}
           className="p-1.5 rounded-md text-ld-text-muted hover:bg-ld-elevated"
           title="Refresh (F5)"
         >
@@ -376,10 +406,6 @@ export function LocalExplorer() {
             onToggleRecursive={() => updateSetting('recursive', !recursive)}
           />
         </div>
-
-        <span className="text-[11px] text-ld-text-muted shrink-0 mr-1">
-          {visible.length} item{visible.length === 1 ? '' : 's'}
-        </span>
 
         <ViewModeMenu mode={view} onChange={(m) => updateSetting('view', m)} />
       </header>
@@ -411,6 +437,8 @@ export function LocalExplorer() {
               dateFormat={dateFormat}
               onDateFormatChange={(f) => updateSetting('dateFormat', f)}
               folderSizes={folderSizes}
+              rowAnimations={rowAnimations}
+              onToggleRowAnimations={() => updateSetting('rowAnimations', !rowAnimations)}
             />
           ) : (
             <FileGrid
@@ -428,6 +456,12 @@ export function LocalExplorer() {
           <PreviewPane entry={selectedEntry} />
         </aside>
       </div>
+
+      <StatusBar
+        count={visible.length}
+        selectedCount={selected ? 1 : 0}
+        totalSize={selectedEntry && !selectedEntry.isDir ? selectedEntry.size : undefined}
+      />
 
       {/* Hidden file input for future import UX */}
       <input ref={fileInputRef} type="file" className="hidden" />

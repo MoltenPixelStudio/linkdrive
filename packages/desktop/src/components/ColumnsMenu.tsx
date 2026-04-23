@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { Check, ChevronRight, Eye, EyeOff, Layers, FolderTree } from 'lucide-react';
+import { Check, ChevronRight, Eye, EyeOff, Layers, FolderTree, Zap } from 'lucide-react';
 import { useState } from 'react';
 import type { Column, ColumnId } from '../types/explorer';
 import type { DateFormat } from '../utils/fileMeta';
@@ -34,6 +34,8 @@ export function ColumnsMenu({
   onToggleHidden,
   foldersFirst,
   onToggleFoldersFirst,
+  rowAnimations,
+  onToggleRowAnimations,
 }: {
   anchor: { x: number; y: number };
   onClose: () => void;
@@ -47,6 +49,8 @@ export function ColumnsMenu({
   onToggleHidden: () => void;
   foldersFirst: boolean;
   onToggleFoldersFirst: () => void;
+  rowAnimations: boolean;
+  onToggleRowAnimations: () => void;
 }) {
   const [expanded, setExpanded] = useState<Expand | ColumnId>(null as Expand);
 
@@ -91,6 +95,12 @@ export function ColumnsMenu({
         label="Show hidden files"
         active={showHidden}
         onClick={onToggleHidden}
+      />
+      <ToggleRow
+        icon={<Zap size={12} />}
+        label="Row animations"
+        active={rowAnimations}
+        onClick={onToggleRowAnimations}
       />
 
       <MenuHeader label="Columns" />

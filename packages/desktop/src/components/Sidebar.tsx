@@ -37,7 +37,6 @@ export function Sidebar({
           );
         })}
       </nav>
-      <div className="p-3 text-[11px] text-ld-text-dim border-t border-ld-border">v0.1.0 · scaffold</div>
     </aside>
   );
 }
