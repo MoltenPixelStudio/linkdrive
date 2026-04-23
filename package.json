@@ -1,0 +1,20 @@
+{
+  "name": "linkdrive",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Fast cross-device file explorer with VPS access. Desktop + mobile clients, same theme as SyncPad.",
+  "workspaces": [
+    "packages/shared",
+    "packages/desktop",
+    "packages/mobile"
+  ],
+  "scripts": {
+    "dev:desktop": "npm --workspace @linkdrive/desktop run dev",
+    "dev:mobile": "npm --workspace @linkdrive/mobile run start",
+    "build:desktop": "npm --workspace @linkdrive/desktop run build",
+    "build:shared": "npm --workspace @linkdrive/shared run build",
+    "typecheck": "npm --workspaces --if-present run typecheck"
+  },
+  "author": "redakarimi",
+  "license": "UNLICENSED"
+}

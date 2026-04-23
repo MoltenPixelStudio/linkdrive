@@ -1,0 +1,33 @@
+node_modules
+dist
+build
+.expo
+.expo-shared
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Tauri
+packages/desktop/src-tauri/target
+packages/desktop/src-tauri/Cargo.lock
+
+# iOS / Android
+packages/mobile/ios/Pods
+packages/mobile/ios/build
+packages/mobile/android/build
+packages/mobile/android/app/build
+packages/mobile/android/.gradle
+
+# Editor
+.idea
+.vscode/*
+!.vscode/settings.json
+
+# Local host store (never commit credentials)
+hosts.json
+*.pem
+*.key
+id_rsa*
+id_ed25519*

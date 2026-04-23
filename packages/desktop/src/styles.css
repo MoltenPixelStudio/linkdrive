@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: 248 247 244;
+  --color-body: 248 247 244;
+  --color-card: 255 255 255;
+  --color-elevated: 242 240 236;
+  --color-border: 231 229 224;
+  --color-border-subtle: 212 208 200;
+  --color-text: 28 25 23;
+  --color-text-muted: 28 25 23;
+  --color-text-dim: 28 25 23;
+}
+
+.dark {
+  --color-bg: 0 0 0;
+  --color-body: 13 13 13;
+  --color-card: 26 26 26;
+  --color-elevated: 42 42 42;
+  --color-border: 42 42 42;
+  --color-border-subtle: 46 46 46;
+  --color-text: 245 245 245;
+  --color-text-muted: 245 245 245;
+  --color-text-dim: 245 245 245;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+/* Custom thin scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-border));
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-border-subtle));
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
