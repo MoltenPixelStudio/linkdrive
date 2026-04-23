@@ -17,6 +17,7 @@ import type { Entry } from '@linkdrive/shared/types';
 import type { Source } from '../utils/source';
 import { useTransfers } from '../context/TransfersContext';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { shellOpen, shellOpenWith } from '../utils/shell';
 import {
   DEFAULT_COLUMNS,
   type Column,
@@ -295,8 +296,14 @@ export function Explorer({ source }: { source: Source }) {
   };
 
   const onOpen = (e: Entry) => {
-    if (e.isDir) navigate(e.path);
-    // Non-dirs: no-op for now. Future: open in default app (Phase 3d).
+    if (e.isDir) {
+      navigate(e.path);
+      return;
+    }
+    if (source.kind === 'local') {
+      shellOpen(e.path).catch((err) => alert(`Open failed: ${err}`));
+    }
+    // Remote non-dirs: future (download to temp then open).
   };
 
   const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -437,7 +444,19 @@ export function Explorer({ source }: { source: Source }) {
   };
 
   const menuItemsForEntry = (e: Entry): MenuItem[] => [
-    { id: 'open', label: e.isDir ? 'Open' : 'Preview', onSelect: () => onOpen(e) },
+    { id: 'open', label: 'Open', onSelect: () => onOpen(e) },
+    ...(source.kind === 'local' && !e.isDir
+      ? [
+          {
+            id: 'open-with',
+            label: 'Open with…',
+            onSelect: () =>
+              shellOpenWith(e.path).catch((err) =>
+                alert(`Open with failed: ${err}`),
+              ),
+          } as MenuItem,
+        ]
+      : []),
     { id: 'sep1', type: 'separator' },
     {
       id: 'rename',

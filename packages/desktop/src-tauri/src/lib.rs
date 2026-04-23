@@ -1,9 +1,11 @@
 mod fs_cmds;
 mod install;
 mod sftp;
+mod shell_open;
 
 use install::{Mode, ModeState};
 use sftp::SftpPool;
+use shell_open::IconCache;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -16,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(ModeState(std::sync::Mutex::new(mode)))
         .manage(SftpPool::default())
+        .manage(IconCache::default())
         .invoke_handler(tauri::generate_handler![
             // mode + install/uninstall
             install::get_mode,
@@ -53,6 +56,10 @@ pub fn run() {
             sftp::ssh_dir_size,
             sftp::ssh_download_file,
             sftp::ssh_upload_file,
+            // shell
+            shell_open::shell_open,
+            shell_open::shell_open_with,
+            shell_open::shell_icon,
         ])
         .setup(move |app| {
             let Some(window) = app.get_webview_window("main") else {

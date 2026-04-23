@@ -25,10 +25,21 @@ russh = "0.52"
 russh-sftp = "2.1"
 sha2 = "0.10"
 base64 = "0.22"
+png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 mslnk = "0.1"
+winapi = { version = "0.3", features = [
+    "shellapi",
+    "winuser",
+    "wingdi",
+    "fileapi",
+    "handleapi",
+    "libloaderapi",
+    "errhandlingapi",
+    "winbase",
+] }
 
 [features]
 default = ["custom-protocol"]
