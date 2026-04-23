@@ -11,6 +11,7 @@ build
 
 # Tauri
 packages/desktop/src-tauri/target
+packages/desktop/src-tauri/gen/schemas
 packages/desktop/src-tauri/Cargo.lock
 
 # iOS / Android
