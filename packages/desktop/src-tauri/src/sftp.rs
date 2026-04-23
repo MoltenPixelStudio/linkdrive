@@ -224,12 +224,22 @@ pub async fn ssh_ls(
             continue;
         }
         let ft = e.file_type();
-        let is_dir = ft == FileType::Dir;
-        let is_symlink = ft == FileType::Symlink;
         let meta = e.metadata();
+        // Prefer the POSIX mode bits when the server populated `permissions`;
+        // fall back to the SFTP FileType enum. Many servers (and russh-sftp's
+        // longname parser) misreport types if only one signal is used.
+        let mode = meta.permissions;
+        let type_bits = mode.map(|p| p & 0o170000);
+        let is_dir = match type_bits {
+            Some(b) => b == 0o040000,
+            None => ft == FileType::Dir,
+        };
+        let is_symlink = match type_bits {
+            Some(b) => b == 0o120000,
+            None => ft == FileType::Symlink,
+        };
         let size = meta.size.unwrap_or(0);
         let mtime = meta.mtime.map(|t| t as i64 * 1000).unwrap_or(0);
-        let mode = meta.permissions;
         out.push(SshEntry {
             path: join_posix(&path, &name),
             name,
@@ -252,8 +262,16 @@ pub async fn ssh_stat(app: AppHandle, host_id: String, path: String) -> Result<S
         .metadata(&path)
         .await
         .map_err(|e| format!("stat: {e}"))?;
-    let is_dir = meta.is_dir();
-    let is_symlink = meta.is_symlink();
+    let mode = meta.permissions;
+    let type_bits = mode.map(|p| p & 0o170000);
+    let is_dir = match type_bits {
+        Some(b) => b == 0o040000,
+        None => meta.is_dir(),
+    };
+    let is_symlink = match type_bits {
+        Some(b) => b == 0o120000,
+        None => meta.is_symlink(),
+    };
     let size = meta.size.unwrap_or(0);
     let mtime = meta.mtime.map(|t| t as i64 * 1000).unwrap_or(0);
     let name = path.rsplit('/').next().unwrap_or("").to_string();
@@ -264,7 +282,7 @@ pub async fn ssh_stat(app: AppHandle, host_id: String, path: String) -> Result<S
         mtime,
         is_dir,
         is_symlink,
-        mode: meta.permissions,
+        mode,
     })
 }
 

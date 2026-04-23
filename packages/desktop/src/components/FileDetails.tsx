@@ -121,12 +121,15 @@ export function FileDetails({
   dateFormat,
   onDateFormatChange,
   folderSizes,
+  renamingPath,
+  onCommitRename,
+  onCancelRename,
 }: {
   entries: Entry[];
   columns: Column[];
   onColumnsChange: (next: Column[]) => void;
-  selected: string | null;
-  onSelect: (path: string) => void;
+  selected: Set<string>;
+  onSelect: (path: string, event?: React.MouseEvent) => void;
   onOpen: (e: Entry) => void;
   onContextMenu: (e: React.MouseEvent, entry: Entry | null) => void;
   sort: SortState;
@@ -140,6 +143,9 @@ export function FileDetails({
   dateFormat: DateFormat;
   onDateFormatChange: (f: DateFormat) => void;
   folderSizes: Map<string, number>;
+  renamingPath: string | null;
+  onCommitRename: (entry: Entry, next: string) => void;
+  onCancelRename: () => void;
 }) {
   const visibleCols = columns.filter((c) => c.visible);
   const gridTemplate = visibleCols
@@ -297,7 +303,7 @@ export function FileDetails({
             }}
           >
             {flat.slice(startIdx, endIdx).map((e) => {
-              const isSel = selected === e.path;
+              const isSel = selected.has(e.path);
               return (
                 <div
                   key={e.path}
@@ -362,11 +368,11 @@ export function FileDetails({
             >
               <div className="overflow-hidden">
                 {g.entries.map((e, i) => {
-                  const isSel = selected === e.path;
+                  const isSel = selected.has(e.path);
                   return (
                     <div
                       key={e.path}
-                      onClick={() => onSelect(e.path)}
+                      onClick={(ev) => onSelect(e.path, ev)}
                       onDoubleClick={() => onOpen(e)}
                       onContextMenu={(ev) => onContextMenu(ev, e)}
                       className={[
@@ -386,6 +392,9 @@ export function FileDetails({
                             entry={e}
                             dateFormat={dateFormat}
                             folderSize={folderSizes.get(e.path)}
+                            renaming={renamingPath === e.path}
+                            onCommitRename={(next) => onCommitRename(e, next)}
+                            onCancelRename={onCancelRename}
                           />
                         ))}
                       </div>
@@ -460,18 +469,34 @@ function Cell({
   entry,
   dateFormat,
   folderSize,
+  renaming,
+  onCommitRename,
+  onCancelRename,
 }: {
   col: Column;
   entry: Entry;
   dateFormat: DateFormat;
   folderSize?: number;
+  renaming?: boolean;
+  onCommitRename?: (next: string) => void;
+  onCancelRename?: () => void;
 }) {
   if (col.id === 'name') {
     return (
       <div className="flex items-center gap-2 px-3 py-1 min-w-0">
         <FileIcon entry={entry} size={18} />
-        <span className="text-ld-text truncate">{entry.name}</span>
-        {entry.isSymlink && <span className="text-[10px] text-ld-text-dim">link</span>}
+        {renaming ? (
+          <RenameInput
+            initial={entry.name}
+            onCommit={(v) => onCommitRename?.(v)}
+            onCancel={() => onCancelRename?.()}
+          />
+        ) : (
+          <>
+            <span className="text-ld-text truncate">{entry.name}</span>
+            {entry.isSymlink && <span className="text-[10px] text-ld-text-dim">link</span>}
+          </>
+        )}
       </div>
     );
   }
@@ -507,4 +532,48 @@ function Cell({
     return <div className="px-3 py-1 text-ld-text-dim truncate">{entry.owner ?? '—'}</div>;
   }
   return null;
+}
+
+function RenameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (next: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    // Select up to the last dot (name part without extension) for quick edit.
+    const dot = initial.lastIndexOf('.');
+    if (dot > 0) el.setSelectionRange(0, dot);
+    else el.select();
+  }, [initial]);
+
+  return (
+    <input
+      ref={ref}
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onBlur={() => onCommit(value.trim())}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit(value.trim());
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      className="flex-1 min-w-0 px-1 py-0 bg-ld-body border border-brand-red/60 rounded text-[12px] text-ld-text outline-none"
+    />
+  );
 }

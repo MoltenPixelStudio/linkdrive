@@ -24,8 +24,8 @@ export function FileGrid({
 }: {
   entries: Entry[];
   mode: Variant;
-  selected: string | null;
-  onSelect: (path: string) => void;
+  selected: Set<string>;
+  onSelect: (path: string, event?: React.MouseEvent) => void;
   onOpen: (e: Entry) => void;
   onContextMenu: (e: React.MouseEvent, entry: Entry | null) => void;
 }) {
@@ -42,11 +42,11 @@ export function FileGrid({
           style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${v.cellW}px, 1fr))` }}
         >
           {entries.map((e) => {
-            const isSel = selected === e.path;
+            const isSel = selected.has(e.path);
             return (
               <button
                 key={e.path}
-                onClick={() => onSelect(e.path)}
+                onClick={(ev) => onSelect(e.path, ev)}
                 onDoubleClick={() => onOpen(e)}
                 onContextMenu={(ev) => onContextMenu(ev, e)}
                 className={[
@@ -76,11 +76,11 @@ export function FileGrid({
           style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${v.cellW}px, 1fr))` }}
         >
           {entries.map((e) => {
-            const isSel = selected === e.path;
+            const isSel = selected.has(e.path);
             return (
               <button
                 key={e.path}
-                onClick={() => onSelect(e.path)}
+                onClick={(ev) => onSelect(e.path, ev)}
                 onDoubleClick={() => onOpen(e)}
                 onContextMenu={(ev) => onContextMenu(ev, e)}
                 className={[
@@ -118,11 +118,11 @@ export function FileGrid({
         style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${v.cellW}px, 1fr))` }}
       >
         {entries.map((e) => {
-          const isSel = selected === e.path;
+          const isSel = selected.has(e.path);
           return (
             <button
               key={e.path}
-              onClick={() => onSelect(e.path)}
+              onClick={(ev) => onSelect(e.path, ev)}
               onDoubleClick={() => onOpen(e)}
               onContextMenu={(ev) => onContextMenu(ev, e)}
               className={[

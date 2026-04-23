@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { Omnibox } from './Omnibox';
 import { ViewModeMenu } from './ViewModeMenu';
 import { FileDetails } from './FileDetails';
@@ -7,6 +7,7 @@ import { FileGrid } from './FileGrid';
 import { PreviewPane } from './PreviewPane';
 import { ContextMenu, useCtx, type MenuItem } from './ContextMenu';
 import { ExplorerSourceContext } from './ExplorerContext';
+import { PropertiesModal } from './PropertiesModal';
 import type { GroupBy } from './FileDetails';
 import type { DateFormat } from '../utils/fileMeta';
 import { useFolderSizes, clearFolderSizeCache } from '../utils/useFolderSizes';
@@ -34,6 +35,7 @@ type Settings = {
   groupBy: GroupBy;
   dateFormat: DateFormat;
   foldersFirst: boolean;
+  previewVisible: boolean;
 };
 
 function loadSettings(): Settings {
@@ -50,6 +52,7 @@ function loadSettings(): Settings {
         groupBy: parsed.groupBy ?? 'none',
         dateFormat: parsed.dateFormat ?? 'long',
         foldersFirst: parsed.foldersFirst ?? true,
+        previewVisible: parsed.previewVisible ?? true,
       };
     }
   } catch {}
@@ -62,6 +65,7 @@ function loadSettings(): Settings {
     groupBy: 'none',
     dateFormat: 'long',
     foldersFirst: true,
+    previewVisible: true,
   };
 }
 
@@ -111,12 +115,24 @@ export function Explorer({ source }: { source: Source }) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lastSelected, setLastSelected] = useState<string | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [propertiesFor, setPropertiesFor] = useState<Entry | null>(null);
   const [query, setQuery] = useState('');
 
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
-  const { view, columns, showHidden, recursive, sort, groupBy, dateFormat, foldersFirst } =
-    settings;
+  const {
+    view,
+    columns,
+    showHidden,
+    recursive,
+    sort,
+    groupBy,
+    dateFormat,
+    foldersFirst,
+    previewVisible,
+  } = settings;
 
   const [history, setHistory] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
@@ -139,7 +155,9 @@ export function Explorer({ source }: { source: Source }) {
   useEffect(() => {
     setPath('');
     setEntries([]);
-    setSelected(null);
+    setSelected(new Set());
+    setLastSelected(null);
+    setRenamingPath(null);
     setHistory([]);
     setFuture([]);
     source
@@ -175,7 +193,9 @@ export function Explorer({ source }: { source: Source }) {
         if (bustCache) clearFolderSizeCache(source.id);
         const list = await source.ls(p);
         setEntries(list);
-        setSelected(null);
+        setSelected(new Set());
+        setLastSelected(null);
+        setRenamingPath(null);
       } catch (e) {
         setErr(String(e));
         setEntries([]);
@@ -238,12 +258,45 @@ export function Explorer({ source }: { source: Source }) {
   ]);
 
   const selectedEntry = useMemo(
-    () => visible.find((e) => e.path === selected) ?? null,
-    [visible, selected],
+    () =>
+      lastSelected
+        ? visible.find((e) => e.path === lastSelected) ?? null
+        : null,
+    [visible, lastSelected],
   );
+
+  const onSelect = (path: string, event?: React.MouseEvent) => {
+    const ctrl = event?.ctrlKey || event?.metaKey;
+    const shift = event?.shiftKey;
+    if (shift && lastSelected) {
+      const a = visible.findIndex((x) => x.path === lastSelected);
+      const b = visible.findIndex((x) => x.path === path);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        const range = new Set<string>();
+        for (let i = lo; i <= hi; i++) range.add(visible[i].path);
+        setSelected(range);
+        setLastSelected(path);
+        return;
+      }
+    }
+    if (ctrl) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        return next;
+      });
+      setLastSelected(path);
+      return;
+    }
+    setSelected(new Set([path]));
+    setLastSelected(path);
+  };
 
   const onOpen = (e: Entry) => {
     if (e.isDir) navigate(e.path);
+    // Non-dirs: no-op for now. Future: open in default app (Phase 3d).
   };
 
   const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -299,12 +352,37 @@ export function Explorer({ source }: { source: Source }) {
     }
   };
 
-  const onRename = async (e: Entry) => {
+  const onDeleteSelection = async () => {
+    if (!source.deletePath || selected.size === 0) return;
+    const names = Array.from(selected)
+      .map((p) => p.split('/').pop())
+      .slice(0, 5)
+      .join(', ');
+    const extra = selected.size > 5 ? ` and ${selected.size - 5} more` : '';
+    if (!confirm(`Delete ${selected.size} item(s)?\n\n${names}${extra}\n\nThis cannot be undone.`))
+      return;
+    for (const p of selected) {
+      try {
+        await source.deletePath(p, true);
+      } catch (err) {
+        alert(`Delete failed for ${p}: ${err}`);
+        break;
+      }
+    }
+    load(path);
+  };
+
+  const onStartRename = (e: Entry) => {
     if (!source.rename) {
       alert('Rename not supported on this source yet.');
       return;
     }
-    const next = prompt('Rename to:', e.name);
+    setRenamingPath(e.path);
+  };
+
+  const onCommitRename = async (e: Entry, next: string) => {
+    setRenamingPath(null);
+    if (!source.rename) return;
     if (!next || next === e.name) return;
     try {
       await source.rename(e.path, `${dirname(e.path)}/${next}`);
@@ -313,6 +391,8 @@ export function Explorer({ source }: { source: Source }) {
       alert(`Rename failed: ${err}`);
     }
   };
+
+  const onCancelRename = () => setRenamingPath(null);
 
   const onNewFolder = async () => {
     if (!source.mkdir) {
@@ -364,7 +444,7 @@ export function Explorer({ source }: { source: Source }) {
       label: 'Rename',
       shortcut: 'F2',
       disabled: !source.rename,
-      onSelect: () => onRename(e),
+      onSelect: () => onStartRename(e),
     },
     { id: 'copy-path', label: 'Copy as path', onSelect: () => onCopyPath(e) },
     {
@@ -385,20 +465,22 @@ export function Explorer({ source }: { source: Source }) {
     { id: 'sep2', type: 'separator' },
     {
       id: 'delete',
-      label: 'Delete',
+      label: selected.size > 1 && selected.has(e.path)
+        ? `Delete ${selected.size} items`
+        : 'Delete',
       shortcut: 'Del',
       danger: true,
       disabled: !source.deletePath,
-      onSelect: () => onDelete(e),
+      onSelect: () =>
+        selected.size > 1 && selected.has(e.path)
+          ? onDeleteSelection()
+          : onDelete(e),
     },
     { id: 'sep3', type: 'separator' },
     {
       id: 'props',
       label: 'Properties',
-      onSelect: () =>
-        alert(
-          `${e.name}\n\nPath: ${e.path}\nType: ${e.isDir ? 'Folder' : 'File'}\nSize: ${e.size} bytes\nModified: ${new Date(e.mtime).toLocaleString()}`,
-        ),
+      onSelect: () => setPropertiesFor(e),
     },
   ];
 
@@ -433,13 +515,25 @@ export function Explorer({ source }: { source: Source }) {
     {
       id: 'props-folder',
       label: 'Folder properties',
-      onSelect: () => alert(`Folder: ${path}\n${entries.length} entries`),
+      onSelect: () =>
+        setPropertiesFor({
+          name: basename(path) || path,
+          path,
+          size: 0,
+          mtime: 0,
+          isDir: true,
+        }),
     },
   ];
 
   const onContextMenu = (e: React.MouseEvent, target: Entry | null) => {
     e.preventDefault();
     e.stopPropagation();
+    // If right-clicking on an unselected item, select just that one.
+    if (target && !selected.has(target.path)) {
+      setSelected(new Set([target.path]));
+      setLastSelected(target.path);
+    }
     ctx.open(e, target);
   };
 
@@ -483,6 +577,18 @@ export function Explorer({ source }: { source: Source }) {
         </div>
 
         <ViewModeMenu mode={view} onChange={(m) => updateSetting('view', m)} />
+        <button
+          onClick={() => updateSetting('previewVisible', !previewVisible)}
+          className={[
+            'p-1.5 rounded-md transition-colors',
+            previewVisible
+              ? 'bg-ld-elevated text-ld-text'
+              : 'text-ld-text-muted hover:bg-ld-elevated',
+          ].join(' ')}
+          title={previewVisible ? 'Hide preview pane' : 'Show preview pane'}
+        >
+          {previewVisible ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+        </button>
       </header>
 
       <div className="flex-1 flex min-h-0">
@@ -497,7 +603,7 @@ export function Explorer({ source }: { source: Source }) {
               columns={columns}
               onColumnsChange={(next) => updateSetting('columns', next)}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={onSelect}
               onOpen={onOpen}
               onContextMenu={onContextMenu}
               sort={sort}
@@ -511,27 +617,32 @@ export function Explorer({ source }: { source: Source }) {
               dateFormat={dateFormat}
               onDateFormatChange={(f) => updateSetting('dateFormat', f)}
               folderSizes={folderSizes}
+              renamingPath={renamingPath}
+              onCommitRename={onCommitRename}
+              onCancelRename={onCancelRename}
             />
           ) : (
             <FileGrid
               entries={visible}
               mode={view}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={onSelect}
               onOpen={onOpen}
               onContextMenu={onContextMenu}
             />
           )}
         </div>
 
-        <aside className="w-[320px] border-l border-ld-border bg-ld-card shrink-0">
-          <PreviewPane entry={selectedEntry} source={source} />
-        </aside>
+        {previewVisible && (
+          <aside className="w-[320px] border-l border-ld-border bg-ld-card shrink-0">
+            <PreviewPane entry={selectedEntry} source={source} />
+          </aside>
+        )}
       </div>
 
       <StatusBar
         count={visible.length}
-        selectedCount={selected ? 1 : 0}
+        selectedCount={selected.size}
         totalSize={selectedEntry && !selectedEntry.isDir ? selectedEntry.size : undefined}
       />
 
@@ -543,6 +654,15 @@ export function Explorer({ source }: { source: Source }) {
           y={ctx.state.y}
           items={ctx.state.target ? menuItemsForEntry(ctx.state.target) : menuItemsForEmpty()}
           onClose={ctx.close}
+        />
+      )}
+
+      {propertiesFor && (
+        <PropertiesModal
+          entry={propertiesFor}
+          source={source}
+          folderSizes={folderSizes}
+          onClose={() => setPropertiesFor(null)}
         />
       )}
     </div>
