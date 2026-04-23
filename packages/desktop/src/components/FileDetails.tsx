@@ -121,8 +121,6 @@ export function FileDetails({
   dateFormat,
   onDateFormatChange,
   folderSizes,
-  rowAnimations,
-  onToggleRowAnimations,
 }: {
   entries: Entry[];
   columns: Column[];
@@ -142,8 +140,6 @@ export function FileDetails({
   dateFormat: DateFormat;
   onDateFormatChange: (f: DateFormat) => void;
   folderSizes: Map<string, number>;
-  rowAnimations: boolean;
-  onToggleRowAnimations: () => void;
 }) {
   const visibleCols = columns.filter((c) => c.visible);
   const gridTemplate = visibleCols
@@ -375,14 +371,8 @@ export function FileDetails({
                       onContextMenu={(ev) => onContextMenu(ev, e)}
                       className={[
                         'flex items-stretch text-xs border-b border-ld-border-subtle/40 cursor-default transition-colors',
-                        rowAnimations ? 'animate-fade-quick' : '',
                         isSel ? 'bg-brand-red/10' : 'hover:bg-ld-elevated',
                       ].join(' ')}
-                      style={
-                        rowAnimations
-                          ? { animationDelay: `${Math.min(i, 12) * 4}ms` }
-                          : undefined
-                      }
                     >
                       <div className="w-8 shrink-0" />
                       <div
@@ -422,8 +412,6 @@ export function FileDetails({
           onToggleHidden={onToggleHidden}
           foldersFirst={foldersFirst}
           onToggleFoldersFirst={onToggleFoldersFirst}
-          rowAnimations={rowAnimations}
-          onToggleRowAnimations={onToggleRowAnimations}
         />
       )}
     </div>

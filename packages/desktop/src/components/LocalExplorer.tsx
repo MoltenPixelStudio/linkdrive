@@ -31,7 +31,6 @@ type Settings = {
   groupBy: GroupBy;
   dateFormat: DateFormat;
   foldersFirst: boolean;
-  rowAnimations: boolean;
 };
 
 function loadSettings(): Settings {
@@ -48,7 +47,6 @@ function loadSettings(): Settings {
         groupBy: parsed.groupBy ?? 'none',
         dateFormat: parsed.dateFormat ?? 'long',
         foldersFirst: parsed.foldersFirst ?? true,
-        rowAnimations: parsed.rowAnimations ?? true,
       };
     }
   } catch {}
@@ -61,7 +59,6 @@ function loadSettings(): Settings {
     groupBy: 'none',
     dateFormat: 'long',
     foldersFirst: true,
-    rowAnimations: true,
   };
 }
 
@@ -112,17 +109,8 @@ export function LocalExplorer() {
   const [query, setQuery] = useState('');
 
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
-  const {
-    view,
-    columns,
-    showHidden,
-    recursive,
-    sort,
-    groupBy,
-    dateFormat,
-    foldersFirst,
-    rowAnimations,
-  } = settings;
+  const { view, columns, showHidden, recursive, sort, groupBy, dateFormat, foldersFirst } =
+    settings;
 
   const [history, setHistory] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
@@ -437,8 +425,6 @@ export function LocalExplorer() {
               dateFormat={dateFormat}
               onDateFormatChange={(f) => updateSetting('dateFormat', f)}
               folderSizes={folderSizes}
-              rowAnimations={rowAnimations}
-              onToggleRowAnimations={() => updateSetting('rowAnimations', !rowAnimations)}
             />
           ) : (
             <FileGrid

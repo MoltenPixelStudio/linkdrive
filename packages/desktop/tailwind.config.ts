@@ -56,7 +56,6 @@ const config: Config = {
       animation: {
         'fade-up': 'fade-up 0.5s ease-out both',
         'fade-in': 'fade-in 0.4s ease-out both',
-        'fade-quick': 'fade-in 0.14s ease-out both',
         'scale-in': 'scale-in 0.3s ease-out both',
         'page-in': 'page-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both',
         'pop-in': 'pop-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both',
