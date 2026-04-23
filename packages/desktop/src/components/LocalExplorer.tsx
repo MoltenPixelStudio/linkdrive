@@ -7,6 +7,8 @@ import { FileGrid } from './FileGrid';
 import { PreviewPane } from './PreviewPane';
 import { ContextMenu, useCtx, type MenuItem } from './ContextMenu';
 import { ls, homeDir, mkdir as mkdirCmd, deletePath, rename as renameCmd } from '../utils/fs';
+import { DetailsFilterBar, type GroupBy } from './DetailsFilterBar';
+import type { DateFormat } from '../utils/fileMeta';
 import { basename, dirname, extname } from '@linkdrive/shared/paths';
 import type { Entry } from '@linkdrive/shared/types';
 import {
@@ -24,6 +26,8 @@ type Settings = {
   showHidden: boolean;
   recursive: boolean;
   sort: { key: ColumnId; dir: 'asc' | 'desc' };
+  groupBy: GroupBy;
+  dateFormat: DateFormat;
 };
 
 function loadSettings(): Settings {
@@ -37,6 +41,8 @@ function loadSettings(): Settings {
         showHidden: !!parsed.showHidden,
         recursive: !!parsed.recursive,
         sort: parsed.sort ?? { key: 'name', dir: 'asc' },
+        groupBy: parsed.groupBy ?? 'none',
+        dateFormat: parsed.dateFormat ?? 'long',
       };
     }
   } catch {}
@@ -46,6 +52,8 @@ function loadSettings(): Settings {
     showHidden: false,
     recursive: false,
     sort: { key: 'name', dir: 'asc' },
+    groupBy: 'none',
+    dateFormat: 'long',
   };
 }
 
@@ -84,7 +92,7 @@ export function LocalExplorer() {
   const [query, setQuery] = useState('');
 
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
-  const { view, columns, showHidden, recursive, sort } = settings;
+  const { view, columns, showHidden, recursive, sort, groupBy, dateFormat } = settings;
 
   const [history, setHistory] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
@@ -99,6 +107,22 @@ export function LocalExplorer() {
   useEffect(() => {
     homeDir().then((h) => setPath(h)).catch(() => setPath('/'));
   }, []);
+
+  // Sync window title to current folder. Guarded for non-tauri dev.
+  useEffect(() => {
+    if (!path) return;
+    const isTauri =
+      typeof window !== 'undefined' &&
+      !!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    if (!isTauri) return;
+    (async () => {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const label = basename(path) || path;
+        await getCurrentWindow().setTitle(`${label} — LinkDrive`);
+      } catch {}
+    })();
+  }, [path]);
 
   const load = useCallback(async (p: string) => {
     setLoading(true);
@@ -335,16 +359,6 @@ export function LocalExplorer() {
         </div>
 
         <ViewModeMenu mode={view} onChange={(m) => updateSetting('view', m)} />
-
-        <label className="flex items-center gap-1.5 text-[11px] text-ld-text-muted cursor-pointer px-2">
-          <input
-            type="checkbox"
-            checked={showHidden}
-            onChange={(e) => updateSetting('showHidden', e.target.checked)}
-            className="accent-brand-red"
-          />
-          Hidden
-        </label>
       </header>
 
       {/* Body: file area + preview */}
@@ -355,17 +369,31 @@ export function LocalExplorer() {
               <span className="text-brand-red">Error:</span> {err}
             </div>
           ) : view === 'details' ? (
-            <FileDetails
-              entries={visible}
-              columns={columns}
-              onColumnsChange={(next) => updateSetting('columns', next)}
-              selected={selected}
-              onSelect={setSelected}
-              onOpen={onOpen}
-              onContextMenu={onContextMenu}
-              sort={sort}
-              onSortChange={(s) => updateSetting('sort', s)}
-            />
+            <>
+              <DetailsFilterBar
+                showHidden={showHidden}
+                onToggleHidden={() => updateSetting('showHidden', !showHidden)}
+                groupBy={groupBy}
+                onGroupChange={(g) => updateSetting('groupBy', g)}
+                dateFormat={dateFormat}
+                onDateFormatChange={(f) => updateSetting('dateFormat', f)}
+                count={visible.length}
+                selectedCount={selected ? 1 : 0}
+              />
+              <FileDetails
+                entries={visible}
+                columns={columns}
+                onColumnsChange={(next) => updateSetting('columns', next)}
+                selected={selected}
+                onSelect={setSelected}
+                onOpen={onOpen}
+                onContextMenu={onContextMenu}
+                sort={sort}
+                onSortChange={(s) => updateSetting('sort', s)}
+                groupBy={groupBy}
+                dateFormat={dateFormat}
+              />
+            </>
           ) : (
             <FileGrid
               entries={visible}

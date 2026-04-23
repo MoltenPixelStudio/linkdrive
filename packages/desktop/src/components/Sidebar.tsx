@@ -1,5 +1,6 @@
 import { Folder, Server, ArrowDownUp, Settings } from 'lucide-react';
 import type { ViewId } from '../App';
+import { BrandGlyph } from './BrandGlyph';
 
 const ITEMS: { id: ViewId; label: string; Icon: typeof Folder }[] = [
   { id: 'local', label: 'This device', Icon: Folder },
@@ -18,7 +19,7 @@ export function Sidebar({
   return (
     <aside className="flex h-full w-[220px] flex-col border-r border-ld-border bg-ld-card">
       <div className="flex h-12 items-center gap-2 px-4 border-b border-ld-border">
-        <div className="h-6 w-6 rounded-md bg-brand-red shadow-[0_0_0_2px_rgba(216,57,61,0.15)]" />
+        <BrandGlyph size={24} rounded={6} />
         <span className="font-semibold tracking-tight">LinkDrive</span>
       </div>
       <nav className="flex-1 overflow-y-auto p-2">

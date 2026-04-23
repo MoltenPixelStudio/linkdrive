@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 export type MenuItem =
   | { id: string; label: string; shortcut?: string; onSelect: () => void; disabled?: boolean; danger?: boolean }
@@ -40,7 +41,7 @@ export function ContextMenu({
   const left = Math.min(x, vw - w - 8);
   const top = Math.min(y, vh - h - 8);
 
-  return (
+  return createPortal(
     <div
       ref={ref}
       className="fixed z-50 min-w-[200px] max-w-[260px] rounded-lg border border-ld-border bg-ld-card shadow-2xl py-1 animate-scale-in"
@@ -74,7 +75,8 @@ export function ContextMenu({
           </button>
         ),
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

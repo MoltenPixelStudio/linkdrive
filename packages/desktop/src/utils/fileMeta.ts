@@ -60,18 +60,39 @@ export function isText(e: Entry): boolean {
   return !e.isDir && (TEXT.has(extname(e.path)) || CODE.has(extname(e.path)));
 }
 
-export function formatDate(ms: number): string {
+export type DateFormat = 'relative' | 'short' | 'long' | 'iso';
+
+export function formatDate(ms: number, fmt: DateFormat = 'long'): string {
   if (!ms) return '—';
   const d = new Date(ms);
   const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) return `Today ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-  const sameYear = d.getFullYear() === now.getFullYear();
-  const opts: Intl.DateTimeFormatOptions = sameYear
-    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
-    : { year: 'numeric', month: 'short', day: 'numeric' };
-  return d.toLocaleDateString([], opts);
+  const dayMs = 86400000;
+  const delta = now.getTime() - ms;
+
+  if (fmt === 'relative') {
+    if (delta < 60000) return 'just now';
+    if (delta < 3600000) return `${Math.floor(delta / 60000)} min ago`;
+    if (delta < dayMs) return `${Math.floor(delta / 3600000)} h ago`;
+    if (delta < 7 * dayMs) return `${Math.floor(delta / dayMs)} d ago`;
+    // fall through to short
+    return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  if (fmt === 'short') {
+    return d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  if (fmt === 'iso') {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  // long: always date + time, consistent
+  return d.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
