@@ -7,7 +7,7 @@ import { FileGrid } from './FileGrid';
 import { PreviewPane } from './PreviewPane';
 import { ContextMenu, useCtx, type MenuItem } from './ContextMenu';
 import { ls, homeDir, mkdir as mkdirCmd, deletePath, rename as renameCmd } from '../utils/fs';
-import { DetailsFilterBar, type GroupBy } from './DetailsFilterBar';
+import type { GroupBy } from './FileDetails';
 import type { DateFormat } from '../utils/fileMeta';
 import { basename, dirname, extname } from '@linkdrive/shared/paths';
 import type { Entry } from '@linkdrive/shared/types';
@@ -28,6 +28,7 @@ type Settings = {
   sort: { key: ColumnId; dir: 'asc' | 'desc' };
   groupBy: GroupBy;
   dateFormat: DateFormat;
+  foldersFirst: boolean;
 };
 
 function loadSettings(): Settings {
@@ -43,6 +44,7 @@ function loadSettings(): Settings {
         sort: parsed.sort ?? { key: 'name', dir: 'asc' },
         groupBy: parsed.groupBy ?? 'none',
         dateFormat: parsed.dateFormat ?? 'long',
+        foldersFirst: parsed.foldersFirst ?? true,
       };
     }
   } catch {}
@@ -54,6 +56,7 @@ function loadSettings(): Settings {
     sort: { key: 'name', dir: 'asc' },
     groupBy: 'none',
     dateFormat: 'long',
+    foldersFirst: true,
   };
 }
 
@@ -63,10 +66,15 @@ function mergeColumns(saved?: Column[]): Column[] {
   return DEFAULT_COLUMNS.map((d) => ({ ...d, ...byId.get(d.id) }));
 }
 
-function sortEntries(list: Entry[], key: ColumnId, dir: 'asc' | 'desc'): Entry[] {
+function sortEntries(
+  list: Entry[],
+  key: ColumnId,
+  dir: 'asc' | 'desc',
+  foldersFirst: boolean,
+): Entry[] {
   const mul = dir === 'asc' ? 1 : -1;
   return [...list].sort((a, b) => {
-    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    if (foldersFirst && a.isDir !== b.isDir) return a.isDir ? -1 : 1;
     switch (key) {
       case 'size':
         return (a.size - b.size) * mul;
@@ -92,7 +100,8 @@ export function LocalExplorer() {
   const [query, setQuery] = useState('');
 
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
-  const { view, columns, showHidden, recursive, sort, groupBy, dateFormat } = settings;
+  const { view, columns, showHidden, recursive, sort, groupBy, dateFormat, foldersFirst } =
+    settings;
 
   const [history, setHistory] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
@@ -179,8 +188,8 @@ export function LocalExplorer() {
       if (q && !e.name.toLowerCase().includes(q)) return false;
       return true;
     });
-    return sortEntries(filtered, sort.key, sort.dir);
-  }, [entries, query, showHidden, sort]);
+    return sortEntries(filtered, sort.key, sort.dir, foldersFirst);
+  }, [entries, query, showHidden, sort, foldersFirst]);
 
   const selectedEntry = useMemo(
     () => visible.find((e) => e.path === selected) ?? null,
@@ -369,31 +378,26 @@ export function LocalExplorer() {
               <span className="text-brand-red">Error:</span> {err}
             </div>
           ) : view === 'details' ? (
-            <>
-              <DetailsFilterBar
-                showHidden={showHidden}
-                onToggleHidden={() => updateSetting('showHidden', !showHidden)}
-                groupBy={groupBy}
-                onGroupChange={(g) => updateSetting('groupBy', g)}
-                dateFormat={dateFormat}
-                onDateFormatChange={(f) => updateSetting('dateFormat', f)}
-                count={visible.length}
-                selectedCount={selected ? 1 : 0}
-              />
-              <FileDetails
-                entries={visible}
-                columns={columns}
-                onColumnsChange={(next) => updateSetting('columns', next)}
-                selected={selected}
-                onSelect={setSelected}
-                onOpen={onOpen}
-                onContextMenu={onContextMenu}
-                sort={sort}
-                onSortChange={(s) => updateSetting('sort', s)}
-                groupBy={groupBy}
-                dateFormat={dateFormat}
-              />
-            </>
+            <FileDetails
+              entries={visible}
+              columns={columns}
+              onColumnsChange={(next) => updateSetting('columns', next)}
+              selected={selected}
+              onSelect={setSelected}
+              onOpen={onOpen}
+              onContextMenu={onContextMenu}
+              sort={sort}
+              onSortChange={(s) => updateSetting('sort', s)}
+              groupBy={groupBy}
+              onGroupChange={(g) => updateSetting('groupBy', g)}
+              showHidden={showHidden}
+              onToggleHidden={() => updateSetting('showHidden', !showHidden)}
+              foldersFirst={foldersFirst}
+              onToggleFoldersFirst={() => updateSetting('foldersFirst', !foldersFirst)}
+              dateFormat={dateFormat}
+              onDateFormatChange={(f) => updateSetting('dateFormat', f)}
+              selectedCount={selected ? 1 : 0}
+            />
           ) : (
             <FileGrid
               entries={visible}

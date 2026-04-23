@@ -1,16 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, ArrowDown, Eye, EyeOff, ChevronDown, Columns3 } from 'lucide-react';
+import {
+  ArrowUp,
+  ArrowDown,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  Columns3,
+  Layers,
+  FolderTree,
+  Check,
+} from 'lucide-react';
 import type { Entry } from '@linkdrive/shared/types';
 import { formatBytes } from '@linkdrive/shared/paths';
 import type { Column, ColumnId } from '../types/explorer';
 import { FileIcon } from './FileIcon';
 import { typeLabel, formatDate, kindOf, type DateFormat, type FileKind } from '../utils/fileMeta';
 import { useFolderSizes } from '../utils/useFolderSizes';
-import type { GroupBy } from './DetailsFilterBar';
+import { ColumnsMenu } from './ColumnsMenu';
+
+export type GroupBy = 'none' | 'type' | 'date' | 'size';
+
+const GROUPS: { id: GroupBy; label: string }[] = [
+  { id: 'none', label: 'No grouping' },
+  { id: 'type', label: 'Type' },
+  { id: 'date', label: 'Date modified' },
+  { id: 'size', label: 'Size' },
+];
 
 type SortState = { key: ColumnId; dir: 'asc' | 'desc' };
-
 type Group = { id: string; label: string; count: number; entries: Entry[] };
 
 const KIND_ORDER: FileKind[] = [
@@ -103,7 +121,14 @@ export function FileDetails({
   sort,
   onSortChange,
   groupBy,
+  onGroupChange,
+  showHidden,
+  onToggleHidden,
+  foldersFirst,
+  onToggleFoldersFirst,
   dateFormat,
+  onDateFormatChange,
+  selectedCount,
 }: {
   entries: Entry[];
   columns: Column[];
@@ -115,31 +140,39 @@ export function FileDetails({
   sort: SortState;
   onSortChange: (next: SortState) => void;
   groupBy: GroupBy;
+  onGroupChange: (g: GroupBy) => void;
+  showHidden: boolean;
+  onToggleHidden: () => void;
+  foldersFirst: boolean;
+  onToggleFoldersFirst: () => void;
   dateFormat: DateFormat;
+  onDateFormatChange: (f: DateFormat) => void;
+  selectedCount: number;
 }) {
   const visibleCols = columns.filter((c) => c.visible);
-  // First visible column (Name) absorbs slack via minmax(w, 1fr) so extra
-  // width never shows up as empty gaps between the narrow right columns.
   const gridTemplate = visibleCols
     .map((c, i) => (i === 0 ? `minmax(${c.width}px, 1fr)` : `${c.width}px`))
     .join(' ');
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
-  const [colsMenu, setColsMenu] = useState<{ x: number; y: number } | null>(null);
+  const [colsAnchor, setColsAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [groupAnchor, setGroupAnchor] = useState<{ x: number; y: number } | null>(null);
   const colsBtnRef = useRef<HTMLButtonElement>(null);
+  const groupBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (!colsMenu) return;
+    if (!colsAnchor && !groupAnchor) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (colsBtnRef.current?.contains(t)) return;
+      if (colsBtnRef.current?.contains(t) || groupBtnRef.current?.contains(t)) return;
       if ((t as HTMLElement).closest?.('[data-cols-menu]')) return;
-      setColsMenu(null);
+      if ((t as HTMLElement).closest?.('[data-pop]')) return;
+      setColsAnchor(null);
+      setGroupAnchor(null);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [colsMenu]);
+  }, [colsAnchor, groupAnchor]);
 
   const groups = useMemo(() => groupEntries(entries, groupBy), [entries, groupBy]);
   const folderSizes = useFolderSizes(entries);
@@ -179,30 +212,25 @@ export function FileDetails({
     });
   };
 
+  const currentGroup = GROUPS.find((g) => g.id === groupBy) ?? GROUPS[0];
+
   return (
     <div className="flex-1 overflow-auto" onContextMenu={(e) => onContextMenu(e, null)}>
-      {/* Column header — with left-side "Columns" button */}
-      <div
-        className="sticky top-0 z-10 bg-ld-body border-b border-ld-border-subtle flex items-stretch text-[11px] font-medium text-ld-text-dim select-none"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setHeaderMenu({ x: e.clientX, y: e.clientY });
-        }}
-      >
+      {/* Column header */}
+      <div className="sticky top-0 z-10 bg-ld-body border-b border-ld-border-subtle flex items-stretch text-[11px] font-medium text-ld-text-dim select-none">
         <button
           ref={colsBtnRef}
           onClick={(e) => {
-            if (colsMenu) {
-              setColsMenu(null);
+            if (colsAnchor) {
+              setColsAnchor(null);
               return;
             }
-            const rect = e.currentTarget.getBoundingClientRect();
-            setColsMenu({ x: rect.left, y: rect.bottom + 4 });
+            const r = e.currentTarget.getBoundingClientRect();
+            setColsAnchor({ x: r.left, y: r.bottom + 4 });
           }}
           className={[
             'flex items-center justify-center w-8 border-r border-ld-border-subtle shrink-0 transition-colors',
-            colsMenu
+            colsAnchor
               ? 'bg-ld-elevated text-ld-text'
               : 'text-ld-text-dim hover:text-ld-text hover:bg-ld-elevated',
           ].join(' ')}
@@ -213,6 +241,12 @@ export function FileDetails({
         <div
           className="grid flex-1 min-w-0"
           style={{ gridTemplateColumns: gridTemplate }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const r = (e.target as HTMLElement).getBoundingClientRect?.();
+            setColsAnchor({ x: e.clientX, y: r ? r.bottom + 4 : e.clientY + 4 });
+          }}
         >
           {visibleCols.map((c) => (
             <HeaderCell
@@ -226,6 +260,66 @@ export function FileDetails({
         </div>
       </div>
 
+      {/* Options strip — generic (not column-specific) controls */}
+      <div
+        className="sticky z-10 bg-ld-body/95 backdrop-blur border-b border-ld-border-subtle flex items-center gap-2 px-3 h-7 shrink-0 text-[11px] text-ld-text-muted"
+        style={{ top: 32 }}
+      >
+        <span>
+          {entries.length} item{entries.length === 1 ? '' : 's'}
+          {selectedCount > 0 && (
+            <span className="ml-2 text-brand-red font-medium">{selectedCount} selected</span>
+          )}
+        </span>
+
+        <div className="flex-1" />
+
+        <button
+          ref={groupBtnRef}
+          onClick={(e) => {
+            if (groupAnchor) {
+              setGroupAnchor(null);
+              return;
+            }
+            const r = e.currentTarget.getBoundingClientRect();
+            setGroupAnchor({ x: r.right - 200, y: r.bottom + 4 });
+          }}
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md hover:bg-ld-elevated hover:text-ld-text transition-colors"
+          title="Group by"
+        >
+          <Layers size={11} />
+          <span>Group: {currentGroup.label}</span>
+        </button>
+
+        <button
+          onClick={onToggleFoldersFirst}
+          className={[
+            'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md transition-colors',
+            foldersFirst
+              ? 'bg-brand-red/15 text-brand-red'
+              : 'hover:bg-ld-elevated hover:text-ld-text',
+          ].join(' ')}
+          title={foldersFirst ? 'Folders first. Click to mix.' : 'Mixed. Click to put folders first.'}
+        >
+          <FolderTree size={11} />
+          <span>{foldersFirst ? 'Folders first' : 'Mixed'}</span>
+        </button>
+
+        <button
+          onClick={onToggleHidden}
+          className={[
+            'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md transition-colors',
+            showHidden
+              ? 'bg-brand-red/15 text-brand-red'
+              : 'hover:bg-ld-elevated hover:text-ld-text',
+          ].join(' ')}
+          title={showHidden ? 'Hide dotfiles' : 'Show dotfiles'}
+        >
+          {showHidden ? <Eye size={11} /> : <EyeOff size={11} />}
+          <span>Hidden</span>
+        </button>
+      </div>
+
       {/* Groups / rows */}
       {groups.map((g) => {
         const isCollapsed = collapsed.has(g.id);
@@ -234,8 +328,7 @@ export function FileDetails({
             {groupBy !== 'none' && (
               <button
                 onClick={() => toggleGroup(g.id)}
-                className="w-full flex items-center gap-1.5 px-3 h-7 text-[11px] font-semibold text-ld-text-muted hover:text-ld-text hover:bg-ld-elevated border-b border-ld-border-subtle/40 sticky"
-                style={{ top: 32 }}
+                className="w-full flex items-center gap-1.5 px-3 h-7 text-[11px] font-semibold text-ld-text-muted hover:text-ld-text hover:bg-ld-elevated border-b border-ld-border-subtle/40"
               >
                 <ChevronDown
                   size={11}
@@ -293,36 +386,35 @@ export function FileDetails({
         );
       })}
 
-      {/* Columns menu — portal to escape any transformed ancestor so it
-          appears exactly at the trigger/cursor location. */}
-      {(headerMenu || colsMenu) &&
+      {colsAnchor && (
+        <ColumnsMenu
+          anchor={colsAnchor}
+          onClose={() => setColsAnchor(null)}
+          columns={columns}
+          onToggle={toggleCol}
+          dateFormat={dateFormat}
+          onDateFormatChange={onDateFormatChange}
+        />
+      )}
+
+      {groupAnchor &&
         createPortal(
           <div
-            data-cols-menu
-            className="fixed z-50 min-w-[200px] rounded-lg border border-ld-border bg-ld-card shadow-2xl py-1 animate-scale-in"
-            style={{
-              left: (headerMenu ?? colsMenu)!.x,
-              top: (headerMenu ?? colsMenu)!.y,
-            }}
-            onMouseLeave={() => {
-              if (headerMenu) setHeaderMenu(null);
-            }}
+            data-pop
+            className="fixed z-50 w-[200px] rounded-lg border border-ld-border bg-ld-card shadow-xl py-1 animate-scale-in"
+            style={{ left: groupAnchor.x, top: groupAnchor.y }}
           >
-            <div className="px-3 pt-1.5 pb-1 text-[10px] uppercase tracking-wide text-ld-text-dim font-semibold">
-              Columns
-            </div>
-            {columns.map((c) => (
+            {GROUPS.map((g) => (
               <button
-                key={c.id}
-                onClick={() => toggleCol(c.id)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-ld-elevated text-ld-text"
+                key={g.id}
+                onClick={() => {
+                  onGroupChange(g.id);
+                  setGroupAnchor(null);
+                }}
+                className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-ld-text hover:bg-ld-elevated"
               >
-                {c.visible ? (
-                  <Eye size={12} className="text-brand-red" />
-                ) : (
-                  <EyeOff size={12} className="text-ld-text-dim" />
-                )}
-                <span>{c.label}</span>
+                <span>{g.label}</span>
+                {g.id === groupBy && <Check size={12} className="text-brand-red" />}
               </button>
             ))}
           </div>,
@@ -392,19 +484,13 @@ function Cell({
   if (col.id === 'size') {
     let label: React.ReactNode;
     if (entry.isDir) {
-      if (folderSize === undefined) {
-        label = <span className="text-ld-text-dim">…</span>;
-      } else if (folderSize < 0) {
-        label = <span className="text-ld-text-dim">—</span>;
-      } else {
-        label = formatBytes(folderSize);
-      }
+      if (folderSize === undefined) label = <span className="text-ld-text-dim">…</span>;
+      else if (folderSize < 0) label = <span className="text-ld-text-dim">—</span>;
+      else label = formatBytes(folderSize);
     } else {
       label = formatBytes(entry.size);
     }
-    return (
-      <div className="px-3 py-1 text-right font-mono text-ld-text-muted">{label}</div>
-    );
+    return <div className="px-3 py-1 text-right font-mono text-ld-text-muted">{label}</div>;
   }
   if (col.id === 'type') {
     return <div className="px-3 py-1 text-ld-text-muted truncate">{typeLabel(entry)}</div>;
