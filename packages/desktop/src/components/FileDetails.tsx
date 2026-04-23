@@ -6,6 +6,7 @@ import { formatBytes } from '@linkdrive/shared/paths';
 import type { Column, ColumnId } from '../types/explorer';
 import { FileIcon } from './FileIcon';
 import { typeLabel, formatDate, kindOf, type DateFormat, type FileKind } from '../utils/fileMeta';
+import { useFolderSizes } from '../utils/useFolderSizes';
 import type { GroupBy } from './DetailsFilterBar';
 
 type SortState = { key: ColumnId; dir: 'asc' | 'desc' };
@@ -141,6 +142,7 @@ export function FileDetails({
   }, [colsMenu]);
 
   const groups = useMemo(() => groupEntries(entries, groupBy), [entries, groupBy]);
+  const folderSizes = useFolderSizes(entries);
 
   const startResize = (colId: ColumnId, startX: number, startWidth: number) => {
     const onMove = (ev: MouseEvent) => {
@@ -191,10 +193,19 @@ export function FileDetails({
         <button
           ref={colsBtnRef}
           onClick={(e) => {
+            if (colsMenu) {
+              setColsMenu(null);
+              return;
+            }
             const rect = e.currentTarget.getBoundingClientRect();
             setColsMenu({ x: rect.left, y: rect.bottom + 4 });
           }}
-          className="flex items-center justify-center w-8 border-r border-ld-border-subtle text-ld-text-dim hover:text-ld-text hover:bg-ld-elevated shrink-0"
+          className={[
+            'flex items-center justify-center w-8 border-r border-ld-border-subtle shrink-0 transition-colors',
+            colsMenu
+              ? 'bg-ld-elevated text-ld-text'
+              : 'text-ld-text-dim hover:text-ld-text hover:bg-ld-elevated',
+          ].join(' ')}
           title="Add or remove columns"
         >
           <Columns3 size={13} />
@@ -264,7 +275,13 @@ export function FileDetails({
                         style={{ gridTemplateColumns: gridTemplate }}
                       >
                         {visibleCols.map((c) => (
-                          <Cell key={c.id} col={c} entry={e} dateFormat={dateFormat} />
+                          <Cell
+                            key={c.id}
+                            col={c}
+                            entry={e}
+                            dateFormat={dateFormat}
+                            folderSize={folderSizes.get(e.path)}
+                          />
                         ))}
                       </div>
                     </div>
@@ -356,10 +373,12 @@ function Cell({
   col,
   entry,
   dateFormat,
+  folderSize,
 }: {
   col: Column;
   entry: Entry;
   dateFormat: DateFormat;
+  folderSize?: number;
 }) {
   if (col.id === 'name') {
     return (
@@ -371,10 +390,20 @@ function Cell({
     );
   }
   if (col.id === 'size') {
+    let label: React.ReactNode;
+    if (entry.isDir) {
+      if (folderSize === undefined) {
+        label = <span className="text-ld-text-dim">…</span>;
+      } else if (folderSize < 0) {
+        label = <span className="text-ld-text-dim">—</span>;
+      } else {
+        label = formatBytes(folderSize);
+      }
+    } else {
+      label = formatBytes(entry.size);
+    }
     return (
-      <div className="px-3 py-1 text-right font-mono text-ld-text-muted">
-        {entry.isDir ? '—' : formatBytes(entry.size)}
-      </div>
+      <div className="px-3 py-1 text-right font-mono text-ld-text-muted">{label}</div>
     );
   }
   if (col.id === 'type') {

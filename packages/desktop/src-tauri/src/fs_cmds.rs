@@ -122,6 +122,36 @@ pub async fn delete_path(path: String, recursive: bool) -> Result<(), String> {
     }
 }
 
+// Recursive size sum. Skips symlinks to avoid loops. Silently ignores
+// permission-denied branches (just excludes them from the total).
+#[tauri::command]
+pub async fn dir_size(path: String) -> Result<u64, String> {
+    let mut stack = vec![std::path::PathBuf::from(&path)];
+    let mut total: u64 = 0;
+    while let Some(p) = stack.pop() {
+        let mut rd = match tokio::fs::read_dir(&p).await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let ep = entry.path();
+            let md = match tokio::fs::symlink_metadata(&ep).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if md.file_type().is_symlink() {
+                continue;
+            }
+            if md.is_dir() {
+                stack.push(ep);
+            } else {
+                total = total.saturating_add(md.len());
+            }
+        }
+    }
+    Ok(total)
+}
+
 #[tauri::command]
 pub fn home_dir() -> Result<String, String> {
     dirs::home_dir()

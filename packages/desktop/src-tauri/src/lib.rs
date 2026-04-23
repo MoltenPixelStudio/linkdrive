@@ -33,6 +33,7 @@ pub fn run() {
             fs_cmds::mkdir,
             fs_cmds::rename,
             fs_cmds::delete_path,
+            fs_cmds::dir_size,
             fs_cmds::home_dir,
         ])
         .setup(move |app| {

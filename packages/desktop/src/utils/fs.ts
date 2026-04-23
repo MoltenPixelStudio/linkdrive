@@ -52,6 +52,10 @@ export async function homeDir(): Promise<string> {
   return invoke<string>('home_dir');
 }
 
+export async function dirSize(path: string): Promise<number> {
+  return invoke<number>('dir_size', { path });
+}
+
 export function fileUrl(path: string): string {
   return convertFileSrc(path);
 }
