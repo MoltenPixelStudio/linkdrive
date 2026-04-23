@@ -1,7 +1,9 @@
 mod fs_cmds;
 mod install;
+mod sftp;
 
 use install::{Mode, ModeState};
+use sftp::SftpPool;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -13,6 +15,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(ModeState(std::sync::Mutex::new(mode)))
+        .manage(SftpPool::default())
         .invoke_handler(tauri::generate_handler![
             // mode + install/uninstall
             install::get_mode,
@@ -35,6 +38,14 @@ pub fn run() {
             fs_cmds::delete_path,
             fs_cmds::dir_size,
             fs_cmds::home_dir,
+            // sftp
+            sftp::ssh_connect,
+            sftp::ssh_disconnect,
+            sftp::ssh_is_connected,
+            sftp::ssh_ls,
+            sftp::ssh_stat,
+            sftp::ssh_read_text,
+            sftp::ssh_home,
         ])
         .setup(move |app| {
             let Some(window) = app.get_webview_window("main") else {

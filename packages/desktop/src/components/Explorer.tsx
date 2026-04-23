@@ -6,13 +6,14 @@ import { FileDetails } from './FileDetails';
 import { FileGrid } from './FileGrid';
 import { PreviewPane } from './PreviewPane';
 import { ContextMenu, useCtx, type MenuItem } from './ContextMenu';
-import { ls, homeDir, mkdir as mkdirCmd, deletePath, rename as renameCmd } from '../utils/fs';
+import { ExplorerSourceContext } from './ExplorerContext';
 import type { GroupBy } from './FileDetails';
 import type { DateFormat } from '../utils/fileMeta';
 import { useFolderSizes, clearFolderSizeCache } from '../utils/useFolderSizes';
 import { StatusBar } from './StatusBar';
 import { basename, dirname, extname } from '@linkdrive/shared/paths';
 import type { Entry } from '@linkdrive/shared/types';
+import type { Source } from '../utils/source';
 import {
   DEFAULT_COLUMNS,
   type Column,
@@ -79,7 +80,7 @@ function sortEntries(
   const sizeOf = (e: Entry): number => {
     if (!e.isDir) return e.size;
     const fs = folderSizes.get(e.path);
-    if (fs === undefined || fs < 0) return -1; // pending/denied → sort to bottom asc
+    if (fs === undefined || fs < 0) return -1;
     return fs;
   };
   return [...list].sort((a, b) => {
@@ -90,7 +91,10 @@ function sortEntries(
       case 'modified':
         return (a.mtime - b.mtime) * mul;
       case 'type':
-        return (extname(a.path).localeCompare(extname(b.path)) || a.name.localeCompare(b.name)) * mul;
+        return (
+          (extname(a.path).localeCompare(extname(b.path)) ||
+            a.name.localeCompare(b.name)) * mul
+        );
       case 'permissions':
       case 'owner':
       case 'name':
@@ -100,7 +104,7 @@ function sortEntries(
   });
 }
 
-export function LocalExplorer() {
+export function Explorer({ source }: { source: Source }) {
   const [path, setPath] = useState<string>('');
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -115,13 +119,10 @@ export function LocalExplorer() {
   const [history, setHistory] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
 
-  // Only compute folder sizes when something actually needs them: Size column
-  // visible, sorting by size, or grouping by size. Otherwise skip all the
-  // recursive walks — huge speedup on folders with node_modules/.git.
   const sizeColumnVisible = columns.find((c) => c.id === 'size')?.visible ?? false;
   const needsFolderSizes =
     sizeColumnVisible || sort.key === 'size' || groupBy === 'size';
-  const folderSizes = useFolderSizes(entries, needsFolderSizes);
+  const folderSizes = useFolderSizes(entries, needsFolderSizes, source.id, source.dirSize);
 
   const ctx = useCtx<Entry | null>();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -130,11 +131,19 @@ export function LocalExplorer() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
+  // Reset explorer state when source changes.
   useEffect(() => {
-    homeDir().then((h) => setPath(h)).catch(() => setPath('/'));
-  }, []);
+    setPath('');
+    setEntries([]);
+    setSelected(null);
+    setHistory([]);
+    setFuture([]);
+    source
+      .home()
+      .then((h) => setPath(h))
+      .catch(() => setPath('/'));
+  }, [source.id]);
 
-  // Sync window title to current folder. Guarded for non-tauri dev.
   useEffect(() => {
     if (!path) return;
     const isTauri =
@@ -144,27 +153,34 @@ export function LocalExplorer() {
     (async () => {
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        const label = basename(path) || path;
-        await getCurrentWindow().setTitle(`${label} — LinkDrive`);
+        const folder = basename(path) || path;
+        const title =
+          source.kind === 'local'
+            ? `${folder} — LinkDrive`
+            : `${folder} · ${source.label} — LinkDrive`;
+        await getCurrentWindow().setTitle(title);
       } catch {}
     })();
-  }, [path]);
+  }, [path, source.kind, source.label]);
 
-  const load = useCallback(async (p: string, bustCache = false) => {
-    setLoading(true);
-    setErr(null);
-    try {
-      if (bustCache) clearFolderSizeCache();
-      const list = await ls(p);
-      setEntries(list);
-      setSelected(null);
-    } catch (e) {
-      setErr(String(e));
-      setEntries([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (p: string, bustCache = false) => {
+      setLoading(true);
+      setErr(null);
+      try {
+        if (bustCache) clearFolderSizeCache(source.id);
+        const list = await source.ls(p);
+        setEntries(list);
+        setSelected(null);
+      } catch (e) {
+        setErr(String(e));
+        setEntries([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [source],
+  );
 
   useEffect(() => {
     if (path) load(path);
@@ -206,8 +222,6 @@ export function LocalExplorer() {
       if (q && !e.name.toLowerCase().includes(q)) return false;
       return true;
     });
-    // Only re-sort when folder sizes change if we're sorting by size.
-    // Otherwise ignore size map to skip unnecessary re-sort work.
     return sortEntries(filtered, sort.key, sort.dir, foldersFirst, folderSizes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -232,7 +246,6 @@ export function LocalExplorer() {
     setSettings((s) => ({ ...s, [key]: value }));
   };
 
-  // Keyboard shortcuts: Ctrl+1..6 view modes, F5 refresh, Del, F2, Backspace=up
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
@@ -250,7 +263,7 @@ export function LocalExplorer() {
         e.preventDefault();
       }
       if (e.key === 'F5') {
-        load(path);
+        load(path, true);
         e.preventDefault();
       }
       if (e.key === 'Backspace' && history.length > 0) {
@@ -267,12 +280,15 @@ export function LocalExplorer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, history, selectedEntry]);
 
-  // Actions
   const onDelete = async (e: Entry) => {
+    if (!source.deletePath) {
+      alert('Delete not supported on this source yet.');
+      return;
+    }
     if (!confirm(`Delete ${e.isDir ? 'folder' : 'file'} "${e.name}"? This cannot be undone.`))
       return;
     try {
-      await deletePath(e.path, true);
+      await source.deletePath(e.path, true);
       load(path);
     } catch (err) {
       alert(`Delete failed: ${err}`);
@@ -280,10 +296,14 @@ export function LocalExplorer() {
   };
 
   const onRename = async (e: Entry) => {
+    if (!source.rename) {
+      alert('Rename not supported on this source yet.');
+      return;
+    }
     const next = prompt('Rename to:', e.name);
     if (!next || next === e.name) return;
     try {
-      await renameCmd(e.path, `${dirname(e.path)}/${next}`);
+      await source.rename(e.path, `${dirname(e.path)}/${next}`);
       load(path);
     } catch (err) {
       alert(`Rename failed: ${err}`);
@@ -291,10 +311,14 @@ export function LocalExplorer() {
   };
 
   const onNewFolder = async () => {
+    if (!source.mkdir) {
+      alert('New folder not supported on this source yet.');
+      return;
+    }
     const name = prompt('New folder name:');
     if (!name) return;
     try {
-      await mkdirCmd(`${path}/${name}`);
+      await source.mkdir(`${path}/${name}`);
       load(path);
     } catch (err) {
       alert(`Could not create folder: ${err}`);
@@ -308,7 +332,13 @@ export function LocalExplorer() {
   const menuItemsForEntry = (e: Entry): MenuItem[] => [
     { id: 'open', label: e.isDir ? 'Open' : 'Preview', onSelect: () => onOpen(e) },
     { id: 'sep1', type: 'separator' },
-    { id: 'rename', label: 'Rename', shortcut: 'F2', onSelect: () => onRename(e) },
+    {
+      id: 'rename',
+      label: 'Rename',
+      shortcut: 'F2',
+      disabled: !source.rename,
+      onSelect: () => onRename(e),
+    },
     { id: 'copy-path', label: 'Copy as path', onSelect: () => onCopyPath(e) },
     {
       id: 'reveal',
@@ -317,7 +347,14 @@ export function LocalExplorer() {
       onSelect: () => navigate(dirname(e.path)),
     },
     { id: 'sep2', type: 'separator' },
-    { id: 'delete', label: 'Delete', shortcut: 'Del', danger: true, onSelect: () => onDelete(e) },
+    {
+      id: 'delete',
+      label: 'Delete',
+      shortcut: 'Del',
+      danger: true,
+      disabled: !source.deletePath,
+      onSelect: () => onDelete(e),
+    },
     { id: 'sep3', type: 'separator' },
     {
       id: 'props',
@@ -330,9 +367,14 @@ export function LocalExplorer() {
   ];
 
   const menuItemsForEmpty = (): MenuItem[] => [
-    { id: 'new-folder', label: 'New folder', onSelect: onNewFolder },
+    {
+      id: 'new-folder',
+      label: 'New folder',
+      disabled: !source.mkdir,
+      onSelect: onNewFolder,
+    },
     { id: 'sep1', type: 'separator' },
-    { id: 'refresh', label: 'Refresh', shortcut: 'F5', onSelect: () => load(path) },
+    { id: 'refresh', label: 'Refresh', shortcut: 'F5', onSelect: () => load(path, true) },
     { id: 'paste', label: 'Paste', disabled: true, onSelect: () => {} },
     { id: 'sep2', type: 'separator' },
     {
@@ -357,8 +399,8 @@ export function LocalExplorer() {
   };
 
   return (
+    <ExplorerSourceContext.Provider value={source}>
     <div className="flex h-full flex-col bg-ld-body">
-      {/* Top bar: nav buttons + omnibox + view menu */}
       <header className="flex items-center gap-2 border-b border-ld-border px-3 h-12">
         <button
           onClick={goBack}
@@ -398,7 +440,6 @@ export function LocalExplorer() {
         <ViewModeMenu mode={view} onChange={(m) => updateSetting('view', m)} />
       </header>
 
-      {/* Body: file area + preview */}
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 flex flex-col min-w-0">
           {err ? (
@@ -439,7 +480,7 @@ export function LocalExplorer() {
         </div>
 
         <aside className="w-[320px] border-l border-ld-border bg-ld-card shrink-0">
-          <PreviewPane entry={selectedEntry} />
+          <PreviewPane entry={selectedEntry} source={source} />
         </aside>
       </div>
 
@@ -449,7 +490,6 @@ export function LocalExplorer() {
         totalSize={selectedEntry && !selectedEntry.isDir ? selectedEntry.size : undefined}
       />
 
-      {/* Hidden file input for future import UX */}
       <input ref={fileInputRef} type="file" className="hidden" />
 
       {ctx.state && (
@@ -461,5 +501,6 @@ export function LocalExplorer() {
         />
       )}
     </div>
+    </ExplorerSourceContext.Provider>
   );
 }

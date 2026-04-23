@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { FileText, FileImage, File, FileVideo } from 'lucide-react';
 import type { Entry } from '@linkdrive/shared/types';
 import { extname, formatBytes } from '@linkdrive/shared/paths';
-import { readText, fileUrl } from '../utils/fs';
+import type { Source } from '../utils/source';
 
 const IMG = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const VID = new Set(['.mp4', '.mov', '.mkv', '.webm']);
@@ -23,7 +23,13 @@ function kindOf(e: Entry | null): Kind {
   return 'other';
 }
 
-export function PreviewPane({ entry }: { entry: Entry | null }) {
+export function PreviewPane({
+  entry,
+  source,
+}: {
+  entry: Entry | null;
+  source: Source;
+}) {
   const kind = kindOf(entry);
   const [text, setText] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -33,13 +39,16 @@ export function PreviewPane({ entry }: { entry: Entry | null }) {
     setErr(null);
     if (!entry || kind !== 'text') return;
     let cancelled = false;
-    readText(entry.path)
+    source
+      .readText(entry.path)
       .then((t) => !cancelled && setText(t))
       .catch((e: unknown) => !cancelled && setErr(String(e)));
     return () => {
       cancelled = true;
     };
-  }, [entry?.path, kind]);
+  }, [entry?.path, kind, source]);
+
+  const mediaUrl = entry && source.fileUrl ? source.fileUrl(entry.path) : null;
 
   if (!entry) {
     return (
@@ -56,19 +65,29 @@ export function PreviewPane({ entry }: { entry: Entry | null }) {
       </header>
 
       <div className="flex-1 overflow-auto p-4 animate-fade-in">
-        {kind === 'image' && (
+        {kind === 'image' && mediaUrl && (
           <img
-            src={fileUrl(entry.path)}
+            src={mediaUrl}
             alt={entry.name}
             className="max-w-full max-h-full object-contain mx-auto rounded-md border border-ld-border-subtle"
           />
         )}
-        {kind === 'video' && (
+        {kind === 'image' && !mediaUrl && (
+          <div className="text-xs text-ld-text-dim text-center py-8">
+            Image preview over SFTP is coming soon.
+          </div>
+        )}
+        {kind === 'video' && mediaUrl && (
           <video
-            src={fileUrl(entry.path)}
+            src={mediaUrl}
             controls
             className="max-w-full max-h-full mx-auto rounded-md border border-ld-border-subtle"
           />
+        )}
+        {kind === 'video' && !mediaUrl && (
+          <div className="text-xs text-ld-text-dim text-center py-8">
+            Video preview over SFTP is coming soon.
+          </div>
         )}
         {kind === 'text' && (
           <>

@@ -1,30 +1,51 @@
 import { useEffect, useState } from 'react';
 import type { Entry } from '@linkdrive/shared/types';
-import { dirSize } from './fs';
 
-// Module-level cache — survives re-renders and navigation. Key: absolute path.
-// Value: size in bytes, -1 for error.
+// Module-level cache keyed by `${sourceId}:${path}`. Value: size in bytes,
+// -1 for error. Survives re-renders and navigation across sources.
 const CACHE = new Map<string, number>();
 const PENDING = new Map<string, Promise<number>>();
 
 const CONCURRENCY = 4;
 
-// Exposed so callers can bust cache on Refresh.
-export function clearFolderSizeCache(): void {
-  CACHE.clear();
-  PENDING.clear();
+export function clearFolderSizeCache(sourceId?: string): void {
+  if (!sourceId) {
+    CACHE.clear();
+    PENDING.clear();
+    return;
+  }
+  const prefix = `${sourceId}:`;
+  for (const k of Array.from(CACHE.keys())) if (k.startsWith(prefix)) CACHE.delete(k);
+  for (const k of Array.from(PENDING.keys())) if (k.startsWith(prefix)) PENDING.delete(k);
 }
 
-export function useFolderSizes(entries: Entry[], enabled: boolean): Map<string, number> {
-  // Start with snapshot of cache so unchanged entries don't re-trigger work.
-  const [sizes, setSizes] = useState<Map<string, number>>(() => new Map(CACHE));
+function snapshotFor(sourceId: string): Map<string, number> {
+  const out = new Map<string, number>();
+  const prefix = `${sourceId}:`;
+  for (const [k, v] of CACHE) {
+    if (k.startsWith(prefix)) out.set(k.slice(prefix.length), v);
+  }
+  return out;
+}
+
+export function useFolderSizes(
+  entries: Entry[],
+  enabled: boolean,
+  sourceId: string,
+  dirSize?: (path: string) => Promise<number>,
+): Map<string, number> {
+  const [sizes, setSizes] = useState<Map<string, number>>(() => snapshotFor(sourceId));
 
   useEffect(() => {
-    if (!enabled) return;
-    const folders = entries.filter((e) => e.isDir && !CACHE.has(e.path));
+    if (!enabled || !dirSize) {
+      setSizes(snapshotFor(sourceId));
+      return;
+    }
+    const folders = entries.filter(
+      (e) => e.isDir && !CACHE.has(`${sourceId}:${e.path}`),
+    );
     if (folders.length === 0) {
-      // New snapshot in case cache changed via other triggers.
-      setSizes(new Map(CACHE));
+      setSizes(snapshotFor(sourceId));
       return;
     }
     let cancelled = false;
@@ -33,16 +54,17 @@ export function useFolderSizes(entries: Entry[], enabled: boolean): Map<string, 
     const worker = async () => {
       while (queue.length > 0 && !cancelled) {
         const e = queue.shift()!;
-        let p = PENDING.get(e.path);
+        const key = `${sourceId}:${e.path}`;
+        let p = PENDING.get(key);
         if (!p) {
           p = dirSize(e.path).catch(() => -1);
-          PENDING.set(e.path, p);
+          PENDING.set(key, p);
         }
         const size = await p;
-        PENDING.delete(e.path);
+        PENDING.delete(key);
         if (cancelled) return;
-        CACHE.set(e.path, size);
-        setSizes(new Map(CACHE));
+        CACHE.set(key, size);
+        setSizes(snapshotFor(sourceId));
       }
     };
 
@@ -51,7 +73,7 @@ export function useFolderSizes(entries: Entry[], enabled: boolean): Map<string, 
     return () => {
       cancelled = true;
     };
-  }, [entries, enabled]);
+  }, [entries, enabled, sourceId, dirSize]);
 
   return sizes;
 }

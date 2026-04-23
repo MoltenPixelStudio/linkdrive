@@ -9,9 +9,9 @@ import {
   FileAudio,
   FileType,
 } from 'lucide-react';
-import { fileUrl } from '../utils/fs';
 import { kindOf, isImage, type FileKind } from '../utils/fileMeta';
 import type { Entry } from '@linkdrive/shared/types';
+import { useExplorerSource } from './ExplorerContext';
 
 const ICONS: Record<FileKind, typeof Folder> = {
   folder: Folder,
@@ -36,15 +36,16 @@ export function FileIcon({
 }) {
   const kind = kindOf(entry);
   const Icon = ICONS[kind];
+  const src = useExplorerSource();
 
-  if (withThumbnail && isImage(entry) && size >= 24) {
+  if (withThumbnail && isImage(entry) && size >= 24 && src?.fileUrl) {
     return (
       <div
         className="shrink-0 bg-ld-elevated rounded overflow-hidden flex items-center justify-center"
         style={{ width: size, height: size }}
       >
         <img
-          src={fileUrl(entry.path)}
+          src={src.fileUrl(entry.path)}
           loading="lazy"
           alt=""
           className="w-full h-full object-cover"
