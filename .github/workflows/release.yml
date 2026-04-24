@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version tag to build (with leading v)
+        required: true
+
+jobs:
+  build-windows:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install cargo-xwin
+        run: cargo install --locked cargo-xwin
+      - name: npm install
+        working-directory: packages/desktop
+        run: npm install --legacy-peer-deps
+      - name: Build windows exe
+        working-directory: packages/desktop
+        run: npm run build:win
+      - name: Compute SHA256
+        id: sha
+        run: |
+          cp packages/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/linkdrive.exe \
+             LinkDrive-Setup-${GITHUB_REF_NAME#v}-win-x64.exe
+          echo "sha=$(sha256sum LinkDrive-Setup-${GITHUB_REF_NAME#v}-win-x64.exe | awk '{print toupper($1)}')" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Upload to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LinkDrive-Setup-*-win-x64.exe
+          tag_name: ${{ github.ref_name }}
+      - name: Save outputs for downstream jobs
+        run: |
+          mkdir -p release-meta
+          echo "${{ steps.sha.outputs.sha }}" > release-meta/sha.txt
+          echo "${{ steps.sha.outputs.version }}" > release-meta/version.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-meta
+          path: release-meta/
+
+  publish-winget:
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: MoltenPixelStudio.LinkDrive
+          installers-regex: 'win-x64\.exe$'
+          token: ${{ secrets.WINGET_PAT }}
+
+  publish-scoop:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: MoltenPixelStudio/scoop-bucket
+          token: ${{ secrets.SCOOP_BUCKET_PAT }}
+          path: bucket
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-meta
+          path: release-meta
+      - name: Update manifest
+        run: |
+          VERSION=$(cat release-meta/version.txt)
+          SHA=$(cat release-meta/sha.txt)
+          jq --arg v "$VERSION" --arg h "$SHA" \
+            '.version=$v | .architecture."64bit".url="https://github.com/MoltenPixelStudio/linkdrive/releases/download/v\($v)/LinkDrive-Setup-\($v)-win-x64.exe#/dl.exe" | .architecture."64bit".hash=$h' \
+            bucket/bucket/linkdrive.json > bucket/bucket/linkdrive.json.new
+          mv bucket/bucket/linkdrive.json.new bucket/bucket/linkdrive.json
+      - name: Commit + push
+        working-directory: bucket
+        run: |
+          git config user.name "MoltenPixelStudio Releaser"
+          git config user.email "releases@moltenpixelstudio.com"
+          git add bucket/linkdrive.json
+          git commit -m "linkdrive: bump to $(cat ../release-meta/version.txt)"
+          git push
+
+  publish-chocolatey:
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-meta
+          path: release-meta
+      - name: Substitute version + checksum
+        shell: pwsh
+        run: |
+          $version = Get-Content release-meta/version.txt -Raw
+          $version = $version.Trim()
+          $sha = Get-Content release-meta/sha.txt -Raw
+          $sha = $sha.Trim()
+          (Get-Content packaging/chocolatey/linkdrive.nuspec -Raw) `
+            -replace '<version>[^<]*</version>', "<version>$version</version>" `
+            -replace 'v0\.1\.0', "v$version" |
+            Set-Content packaging/chocolatey/linkdrive.nuspec
+          (Get-Content packaging/chocolatey/tools/chocolateyinstall.ps1 -Raw) `
+            -replace "REPLACE_WITH_RELEASE_ASSET_SHA256", $sha `
+            -replace 'v0\.1\.0', "v$version" `
+            -replace '0\.1\.0', $version |
+            Set-Content packaging/chocolatey/tools/chocolateyinstall.ps1
+      - name: Pack + push
+        shell: pwsh
+        run: |
+          choco pack packaging/chocolatey/linkdrive.nuspec
+          choco push --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
