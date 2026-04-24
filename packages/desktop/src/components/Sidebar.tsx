@@ -1,9 +1,10 @@
-import { Folder, Server, ArrowDownUp, Settings } from 'lucide-react';
+import { Folder, Server, ArrowDownUp, Settings, Columns2 } from 'lucide-react';
 import type { ViewId } from '../App';
 
 const ITEMS: { id: ViewId; label: string; Icon: typeof Folder }[] = [
   { id: 'local', label: 'This device', Icon: Folder },
   { id: 'hosts', label: 'Hosts', Icon: Server },
+  { id: 'split', label: 'Split view', Icon: Columns2 },
   { id: 'transfers', label: 'Transfers', Icon: ArrowDownUp },
   { id: 'settings', label: 'Settings', Icon: Settings },
 ];

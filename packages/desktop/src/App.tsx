@@ -8,7 +8,7 @@ import { ActiveHostProvider } from './context/ActiveHostContext';
 import { TransfersProvider } from './context/TransfersContext';
 import { TransfersDrawer } from './components/TransfersDrawer';
 
-export type ViewId = 'local' | 'hosts' | 'remote' | 'transfers' | 'settings';
+export type ViewId = 'local' | 'hosts' | 'remote' | 'split' | 'transfers' | 'settings';
 
 export function App() {
   const [view, setView] = useState<ViewId>('local');

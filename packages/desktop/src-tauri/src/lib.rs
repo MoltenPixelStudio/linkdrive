@@ -2,6 +2,7 @@ mod fs_cmds;
 mod install;
 mod sftp;
 mod shell_open;
+mod tailscale;
 
 use install::{Mode, ModeState};
 use sftp::{SftpPool, TransferCancels};
@@ -66,6 +67,7 @@ pub fn run() {
             shell_open::shell_open,
             shell_open::shell_open_with,
             shell_open::shell_icon,
+            tailscale::tailscale_peers,
         ])
         .setup(move |app| {
             let Some(window) = app.get_webview_window("main") else {

@@ -3,6 +3,7 @@ import type { ViewId } from '../App';
 import { HostsView } from './HostsView';
 import { Explorer } from './Explorer';
 import { TransfersView } from './TransfersView';
+import { SplitView } from './SplitView';
 import { localSource, sftpSource } from '../utils/source';
 import { useHosts } from '../context/HostsContext';
 import { useActiveHost } from '../context/ActiveHostContext';
@@ -25,6 +26,7 @@ export function ExplorerPane({
 
   if (view === 'hosts') return <HostsView onNavigateView={onNavigateView} />;
   if (view === 'transfers') return <TransfersView />;
+  if (view === 'split') return <SplitView onNavigateView={onNavigateView} />;
   if (view === 'local') return <Explorer source={localSource} />;
   if (view === 'remote' && remoteSource) return <Explorer source={remoteSource} />;
   return (

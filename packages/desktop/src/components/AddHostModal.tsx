@@ -1,8 +1,17 @@
-import { useState } from 'react';
-import { X, FolderOpen } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { X, FolderOpen, Globe } from 'lucide-react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import { createPortal } from 'react-dom';
 import type { Host } from '@linkdrive/shared/types';
+
+type TailscalePeer = {
+  name: string;
+  dns: string;
+  ip: string;
+  online: boolean;
+  os?: string;
+};
 
 export function AddHostModal({
   onClose,
@@ -23,6 +32,16 @@ export function AddHostModal({
   const [keyPath, setKeyPath] = useState(
     initial && initial.auth.type === 'key' ? initial.auth.keyPath ?? '' : '',
   );
+
+  const [tsPeers, setTsPeers] = useState<TailscalePeer[] | null>(null);
+  const [tsOpen, setTsOpen] = useState(false);
+
+  useEffect(() => {
+    // Silent probe for tailscale; leave peers=null if not available.
+    invoke<TailscalePeer[]>('tailscale_peers')
+      .then((peers) => setTsPeers(peers))
+      .catch(() => setTsPeers(null));
+  }, []);
 
   const canSave = name.trim() && host.trim() && user.trim() && port.trim();
 
@@ -83,13 +102,62 @@ export function AddHostModal({
         <div className="p-5 space-y-3.5">
           <Field label="Name" value={name} onChange={setName} placeholder="My VPS" />
           <div className="grid grid-cols-[1fr_80px] gap-2">
-            <Field
-              label="Host"
-              value={host}
-              onChange={setHost}
-              placeholder="203.0.113.5"
-              autoCap="none"
-            />
+            <div className="relative">
+              <Field
+                label="Host"
+                value={host}
+                onChange={setHost}
+                placeholder="203.0.113.5"
+                autoCap="none"
+              />
+              {tsPeers && tsPeers.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTsOpen((v) => !v)}
+                  className="absolute right-2 bottom-2 text-[10.5px] text-brand-red hover:text-brand-muted-red font-semibold inline-flex items-center gap-1"
+                  title="Pick a Tailscale peer"
+                >
+                  <Globe size={10} /> Tailscale
+                </button>
+              )}
+              {tsOpen && tsPeers && (
+                <div className="absolute z-30 right-0 top-full mt-1 w-[300px] rounded-lg border border-ld-border bg-ld-card shadow-xl py-1 animate-scale-in max-h-[260px] overflow-y-auto">
+                  {tsPeers.length === 0 && (
+                    <div className="px-3 py-2 text-[11px] text-ld-text-dim">
+                      No Tailnet peers found.
+                    </div>
+                  )}
+                  {tsPeers.map((p) => (
+                    <button
+                      key={p.ip || p.dns}
+                      type="button"
+                      onClick={() => {
+                        setHost(p.dns || p.ip);
+                        if (!name.trim()) setName(p.name || p.dns.split('.')[0]);
+                        setTsOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-ld-elevated"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={[
+                            'h-1.5 w-1.5 rounded-full',
+                            p.online ? 'bg-emerald-500' : 'bg-ld-text-dim',
+                          ].join(' ')}
+                        />
+                        <span className="text-[12px] text-ld-text truncate">
+                          {p.name || p.dns}
+                        </span>
+                      </div>
+                      <div className="text-[10.5px] text-ld-text-muted font-mono truncate">
+                        {p.dns} · {p.ip}
+                        {p.os ? ` · ${p.os}` : ''}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <Field label="Port" value={port} onChange={setPort} inputMode="numeric" />
           </div>
           <Field label="User" value={user} onChange={setUser} placeholder="root" autoCap="none" />
