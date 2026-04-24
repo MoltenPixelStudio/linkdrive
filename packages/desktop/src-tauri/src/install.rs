@@ -20,6 +20,7 @@ pub enum Mode {
     App,
     Install,
     Uninstall,
+    SilentUpdate,
 }
 
 pub struct ModeState(pub std::sync::Mutex<Mode>);
@@ -56,6 +57,9 @@ pub fn resolve_install_dir() -> PathBuf {
 }
 
 pub fn detect_mode() -> Mode {
+    if std::env::args().any(|a| a == "--silent-update") {
+        return Mode::SilentUpdate;
+    }
     if std::env::args().any(|a| a == "--uninstall") {
         return Mode::Uninstall;
     }
@@ -184,7 +188,7 @@ fn create_desktop_shortcut(_target: &std::path::Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn write_uninstall_registry(
+pub(crate) fn write_uninstall_registry(
     install_path: &std::path::Path,
     exe: &std::path::Path,
 ) -> std::io::Result<()> {
@@ -206,7 +210,7 @@ fn write_uninstall_registry(
 }
 
 #[cfg(windows)]
-fn kill_running_instances() {
+pub(crate) fn kill_running_instances() {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let self_pid = std::process::id();
@@ -224,7 +228,7 @@ fn kill_running_instances() {
 }
 
 #[cfg(not(windows))]
-fn kill_running_instances() {}
+pub(crate) fn kill_running_instances() {}
 
 #[tauri::command]
 pub async fn run_install(app: AppHandle, options: Option<InstallOptions>) -> Result<(), String> {
@@ -393,4 +397,85 @@ pub fn finalize_uninstall(app: AppHandle) {
 #[tauri::command]
 pub fn close_app(app: AppHandle) {
     app.exit(0);
+}
+
+// Downloads the payload via JS and hands the bytes to us. We write them to
+// temp, spawn a detached --silent-update, and exit so the new binary can
+// overwrite the installed copy while we're gone.
+#[tauri::command]
+pub async fn apply_update(app: AppHandle, bytes: Vec<u8>) -> Result<(), String> {
+    let temp = std::env::temp_dir().join("LinkDrive-Update-Setup.exe");
+    std::fs::write(&temp, &bytes).map_err(|e| format!("write temp: {e}"))?;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        std::process::Command::new(&temp)
+            .arg("--silent-update")
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+            .spawn()
+            .map_err(|e| format!("spawn: {e}"))?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new(&temp)
+            .arg("--silent-update")
+            .spawn()
+            .map_err(|e| format!("spawn: {e}"))?;
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    app.exit(0);
+    Ok(())
+}
+
+// SilentUpdate entry-point. Waits for the running app to exit, copies
+// ourselves over the installed binary, refreshes the Add/Remove registry
+// entry, and relaunches the installed copy detached.
+pub fn run_silent_update() {
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    kill_running_instances();
+
+    let Ok(src) = std::env::current_exe() else { return };
+    let dir = resolve_install_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let dst = dir.join(MAIN_BINARY);
+    let tmp = dir.join(format!("{MAIN_BINARY}.new"));
+
+    let mut ok = false;
+    for _ in 0..8 {
+        let _ = std::fs::remove_file(&tmp);
+        if std::fs::copy(&src, &tmp).is_err() {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            continue;
+        }
+        let _ = std::fs::remove_file(&dst);
+        if std::fs::rename(&tmp, &dst).is_ok() {
+            ok = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    if !ok {
+        return;
+    }
+
+    #[cfg(windows)]
+    {
+        let _ = write_uninstall_registry(&dir, &dst);
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        let _ = std::process::Command::new(&dst)
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new(&dst).spawn();
+    }
 }

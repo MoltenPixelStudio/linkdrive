@@ -13,6 +13,11 @@ use tauri::Manager;
 pub fn run() {
     let mode = install::detect_mode();
 
+    if mode == Mode::SilentUpdate {
+        install::run_silent_update();
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -32,6 +37,7 @@ pub fn run() {
             install::run_uninstall,
             install::finalize_uninstall,
             install::close_app,
+            install::apply_update,
             // filesystem (App mode only, but registered always — unused
             // commands are harmless)
             fs_cmds::ls,
@@ -91,6 +97,9 @@ pub fn run() {
                 Mode::App => {
                     let _ = window.set_title("LinkDrive");
                     let _ = window.maximize();
+                }
+                Mode::SilentUpdate => {
+                    // Handled earlier (returns before Tauri init). Unreachable.
                 }
             }
             let _ = window.show();
