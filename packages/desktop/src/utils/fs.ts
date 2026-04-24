@@ -52,6 +52,10 @@ export async function homeDir(): Promise<string> {
   return invoke<string>('home_dir');
 }
 
+export function localExists(path: string): Promise<boolean> {
+  return invoke<boolean>('local_exists', { path });
+}
+
 export async function dirSize(path: string): Promise<number> {
   return invoke<number>('dir_size', { path });
 }

@@ -180,6 +180,11 @@ pub fn temp_path_for(name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn local_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+#[tauri::command]
 pub fn home_dir() -> Result<String, String> {
     dirs::home_dir()
         .map(|p| p.to_string_lossy().into_owned())

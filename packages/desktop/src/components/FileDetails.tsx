@@ -372,6 +372,7 @@ export function FileDetails({
                   return (
                     <div
                       key={e.path}
+                      data-entry-path={e.path}
                       onClick={(ev) => onSelect(e.path, ev)}
                       onDoubleClick={() => onOpen(e)}
                       onContextMenu={(ev) => onContextMenu(ev, e)}

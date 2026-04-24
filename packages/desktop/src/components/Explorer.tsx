@@ -18,6 +18,8 @@ import type { Source } from '../utils/source';
 import { useTransfers } from '../context/TransfersContext';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { shellOpen, shellOpenWith, tempPathFor } from '../utils/shell';
+import { localExists } from '../utils/fs';
+import { Bookmark as BookmarkIcon, BookmarkPlus } from 'lucide-react';
 import {
   DEFAULT_COLUMNS,
   type Column,
@@ -26,6 +28,8 @@ import {
 } from '../types/explorer';
 
 const SETTINGS_KEY = 'linkdrive.explorer.settings';
+
+type Bookmark = { sourceKey: string; path: string; label: string };
 
 type Settings = {
   view: ViewMode;
@@ -37,6 +41,7 @@ type Settings = {
   dateFormat: DateFormat;
   foldersFirst: boolean;
   previewVisible: boolean;
+  bookmarks: Bookmark[];
 };
 
 function loadSettings(): Settings {
@@ -54,6 +59,7 @@ function loadSettings(): Settings {
         dateFormat: parsed.dateFormat ?? 'long',
         foldersFirst: parsed.foldersFirst ?? true,
         previewVisible: parsed.previewVisible ?? true,
+        bookmarks: Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [],
       };
     }
   } catch {}
@@ -67,6 +73,7 @@ function loadSettings(): Settings {
     dateFormat: 'long',
     foldersFirst: true,
     previewVisible: true,
+    bookmarks: [],
   };
 }
 
@@ -133,7 +140,33 @@ export function Explorer({ source }: { source: Source }) {
     dateFormat,
     foldersFirst,
     previewVisible,
+    bookmarks,
   } = settings;
+
+  const sourceKey = `${source.kind}:${source.id}`;
+  const mine = bookmarks.filter((b) => b.sourceKey === sourceKey);
+  const [bookmarksOpen, setBookmarksOpen] = useState(false);
+  const bookmarksRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!bookmarksOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!bookmarksRef.current?.contains(e.target as Node)) setBookmarksOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [bookmarksOpen]);
+
+  const addBookmark = () => {
+    const label = prompt('Bookmark name:', basename(path) || path);
+    if (!label) return;
+    updateSetting('bookmarks', [...bookmarks, { sourceKey, path, label }]);
+  };
+  const removeBookmark = (b: Bookmark) => {
+    updateSetting(
+      'bookmarks',
+      bookmarks.filter((x) => !(x.sourceKey === b.sourceKey && x.path === b.path)),
+    );
+  };
 
   const [history, setHistory] = useState<string[]>([]);
   const [future, setFuture] = useState<string[]>([]);
@@ -297,19 +330,29 @@ export function Explorer({ source }: { source: Source }) {
   };
 
   const onOpen = async (e: Entry) => {
-    if (e.isDir) {
-      navigate(e.path);
+    // Resolve symlinks: a stat that follows the link tells us if the target
+    // is a dir we should navigate into or a file we should open.
+    let target = e;
+    if (e.isSymlink) {
+      try {
+        target = await source.stat(e.path);
+      } catch {
+        // fall through — treat as file
+      }
+    }
+    if (target.isDir) {
+      navigate(target.path);
       return;
     }
     if (source.kind === 'local') {
-      shellOpen(e.path).catch((err) => alert(`Open failed: ${err}`));
+      shellOpen(target.path).catch((err) => alert(`Open failed: ${err}`));
       return;
     }
     // Remote: download to OS temp dir, then open in default app.
     try {
-      const name = e.path.split('/').pop() || 'file';
+      const name = target.path.split('/').pop() || 'file';
       const dst = await tempPathFor(name);
-      const id = startDownload(source.id, e.path, dst);
+      const id = startDownload(source.id, target.path, dst);
       await waitForTransfer(id);
       shellOpen(dst).catch((err) => alert(`Open failed: ${err}`));
     } catch (err) {
@@ -431,6 +474,21 @@ export function Explorer({ source }: { source: Source }) {
     navigator.clipboard?.writeText(e.path).catch(() => {});
   };
 
+  const confirmOverwriteLocal = async (dst: string, name: string) => {
+    const exists = await localExists(dst).catch(() => false);
+    if (!exists) return true;
+    return confirm(`"${name}" already exists at that location.\n\nOverwrite?`);
+  };
+
+  const confirmOverwriteRemote = async (dst: string, name: string) => {
+    try {
+      await source.stat(dst);
+      return confirm(`"${name}" already exists on the remote host.\n\nOverwrite?`);
+    } catch {
+      return true;
+    }
+  };
+
   const onDownload = async (e: Entry) => {
     if (source.kind !== 'sftp') return;
     if (e.isDir) {
@@ -441,7 +499,9 @@ export function Explorer({ source }: { source: Source }) {
       }).catch(() => null);
       if (typeof destDir !== 'string' || !destDir) return;
       const sep = destDir.includes('\\') ? '\\' : '/';
-      startDownloadDir(source.id, e.path, `${destDir}${sep}${e.name}`);
+      const full = `${destDir}${sep}${e.name}`;
+      if (!(await confirmOverwriteLocal(full, e.name))) return;
+      startDownloadDir(source.id, e.path, full);
       return;
     }
     const picked = await saveDialog({
@@ -449,6 +509,7 @@ export function Explorer({ source }: { source: Source }) {
       title: `Download ${e.name}`,
     }).catch(() => null);
     if (typeof picked !== 'string' || !picked) return;
+    // saveDialog already confirms overwrite on its own.
     startDownload(source.id, e.path, picked);
   };
 
@@ -485,6 +546,7 @@ export function Explorer({ source }: { source: Source }) {
     for (const localPath of list) {
       const name = localPath.split(/[\\/]/).pop() ?? 'upload';
       const remotePath = path.endsWith('/') ? `${path}${name}` : `${path}/${name}`;
+      if (!(await confirmOverwriteRemote(remotePath, name))) continue;
       startUpload(source.id, localPath, remotePath);
     }
   };
@@ -499,6 +561,7 @@ export function Explorer({ source }: { source: Source }) {
     if (typeof picked !== 'string' || !picked) return;
     const name = picked.split(/[\\/]/).pop() ?? 'uploaded';
     const remotePath = path.endsWith('/') ? `${path}${name}` : `${path}/${name}`;
+    if (!(await confirmOverwriteRemote(remotePath, name))) return;
     startUploadDir(source.id, picked, remotePath);
   };
 
@@ -576,6 +639,11 @@ export function Explorer({ source }: { source: Source }) {
       label: 'New folder',
       disabled: !source.mkdir,
       onSelect: onNewFolder,
+    },
+    {
+      id: 'bookmark',
+      label: 'Bookmark this folder',
+      onSelect: addBookmark,
     },
     { id: 'sep1', type: 'separator' },
     { id: 'refresh', label: 'Refresh', shortcut: 'F5', onSelect: () => load(path, true) },
@@ -665,6 +733,71 @@ export function Explorer({ source }: { source: Source }) {
             recursive={recursive}
             onToggleRecursive={() => updateSetting('recursive', !recursive)}
           />
+        </div>
+
+        <div ref={bookmarksRef} className="relative">
+          <button
+            onClick={() => setBookmarksOpen((v) => !v)}
+            className={[
+              'p-1.5 rounded-md transition-colors',
+              bookmarksOpen
+                ? 'bg-ld-elevated text-ld-text'
+                : 'text-ld-text-muted hover:bg-ld-elevated',
+            ].join(' ')}
+            title="Bookmarks"
+          >
+            <BookmarkIcon size={14} />
+          </button>
+          {bookmarksOpen && (
+            <div className="absolute right-0 mt-1 z-40 w-[260px] rounded-lg border border-ld-border bg-ld-card shadow-xl py-1 animate-scale-in">
+              <button
+                onClick={() => {
+                  addBookmark();
+                  setBookmarksOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-ld-text hover:bg-ld-elevated"
+              >
+                <BookmarkPlus size={12} className="text-brand-red" />
+                Bookmark current folder
+              </button>
+              {mine.length > 0 && (
+                <>
+                  <div className="my-1 h-px bg-ld-border-subtle" />
+                  {mine.map((b) => (
+                    <div
+                      key={`${b.sourceKey}|${b.path}`}
+                      className="group flex items-center gap-1 pr-1"
+                    >
+                      <button
+                        onClick={() => {
+                          navigate(b.path);
+                          setBookmarksOpen(false);
+                        }}
+                        className="flex-1 min-w-0 text-left px-3 py-1.5 text-xs text-ld-text hover:bg-ld-elevated"
+                      >
+                        <div className="truncate">{b.label}</div>
+                        <div className="text-[10px] text-ld-text-dim truncate font-mono">
+                          {b.path}
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => removeBookmark(b)}
+                        className="opacity-0 group-hover:opacity-100 text-[10px] text-ld-text-dim hover:text-brand-red px-1.5"
+                        title="Remove"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </>
+              )}
+              {mine.length === 0 && (
+                <div className="px-3 pb-2 pt-1 text-[10.5px] text-ld-text-dim">
+                  No bookmarks for this source yet.
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <ViewModeMenu mode={view} onChange={(m) => updateSetting('view', m)} />

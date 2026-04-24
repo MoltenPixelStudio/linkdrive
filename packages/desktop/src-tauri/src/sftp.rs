@@ -476,7 +476,7 @@ pub async fn ssh_dir_size(
 // Returns raw bytes of a file, capped at MAX_READ_BYTES to avoid blowing the
 // renderer's memory on accidental huge-file reads. Used for image previews
 // (base64 data URLs) and similar small reads.
-const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_READ_BYTES: u64 = 64 * 1024 * 1024;
 
 #[tauri::command]
 pub async fn ssh_read_bytes(

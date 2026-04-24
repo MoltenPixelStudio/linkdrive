@@ -42,6 +42,7 @@ pub fn run() {
             fs_cmds::delete_path,
             fs_cmds::dir_size,
             fs_cmds::temp_path_for,
+            fs_cmds::local_exists,
             fs_cmds::home_dir,
             // sftp
             sftp::ssh_connect,
