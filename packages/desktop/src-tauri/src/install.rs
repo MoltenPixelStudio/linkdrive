@@ -19,6 +19,7 @@ pub const UNINSTALL_KEY: &str =
 pub enum Mode {
     App,
     Install,
+    SilentInstall,
     Uninstall,
     SilentUpdate,
 }
@@ -59,6 +60,9 @@ pub fn resolve_install_dir() -> PathBuf {
 pub fn detect_mode() -> Mode {
     if std::env::args().any(|a| a == "--silent-update") {
         return Mode::SilentUpdate;
+    }
+    if std::env::args().any(|a| a == "--silent-install" || a == "/S" || a == "/silent") {
+        return Mode::SilentInstall;
     }
     if std::env::args().any(|a| a == "--uninstall") {
         return Mode::Uninstall;
@@ -429,6 +433,37 @@ pub async fn apply_update(app: AppHandle, bytes: Vec<u8>) -> Result<(), String> 
     std::thread::sleep(std::time::Duration::from_millis(250));
     app.exit(0);
     Ok(())
+}
+
+// Headless install used by Winget / Scoop / Chocolatey. Copies self to the
+// default install location, writes shortcut + registry, exits 0. No UI.
+pub fn run_silent_install() -> i32 {
+    let Ok(src) = std::env::current_exe() else { return 1 };
+    let dir = default_install_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return 1;
+    }
+    let dst = dir.join(MAIN_BINARY);
+    let tmp = dir.join(format!("{MAIN_BINARY}.new"));
+
+    kill_running_instances();
+
+    if src.canonicalize().ok() != dst.canonicalize().ok() {
+        if std::fs::copy(&src, &tmp).is_err() {
+            return 2;
+        }
+        let _ = std::fs::remove_file(&dst);
+        if std::fs::rename(&tmp, &dst).is_err() {
+            return 3;
+        }
+    }
+
+    let _ = create_start_menu_shortcut(&dst);
+    #[cfg(windows)]
+    {
+        let _ = write_uninstall_registry(&dir, &dst);
+    }
+    0
 }
 
 // SilentUpdate entry-point. Waits for the running app to exit, copies

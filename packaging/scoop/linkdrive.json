@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/schema.json",
+  "version": "0.1.0",
+  "description": "Fast cross-device file explorer with VPS + LAN peer access",
+  "homepage": "https://github.com/MoltenPixelStudio/linkdrive",
+  "license": {
+    "identifier": "Proprietary",
+    "url": "https://github.com/MoltenPixelStudio/linkdrive/blob/main/LICENSE"
+  },
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/MoltenPixelStudio/linkdrive/releases/download/v0.1.0/LinkDrive-Setup-0.1.0-win-x64.exe#/dl.exe",
+      "hash": "REPLACE_WITH_RELEASE_ASSET_SHA256"
+    }
+  },
+  "installer": {
+    "script": [
+      "Copy-Item \"$dir\\dl.exe\" \"$dir\\LinkDrive-Setup.exe\" -Force",
+      "Start-Process -FilePath \"$dir\\LinkDrive-Setup.exe\" -ArgumentList '--silent-install' -Wait -NoNewWindow"
+    ]
+  },
+  "uninstaller": {
+    "script": [
+      "$exe = \"$env:LOCALAPPDATA\\LinkDrive\\LinkDrive.exe\"",
+      "if (Test-Path $exe) { Start-Process -FilePath $exe -ArgumentList '--uninstall' -Wait -NoNewWindow }"
+    ]
+  },
+  "shortcuts": [],
+  "checkver": {
+    "github": "https://github.com/MoltenPixelStudio/linkdrive"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/MoltenPixelStudio/linkdrive/releases/download/v$version/LinkDrive-Setup-$version-win-x64.exe#/dl.exe"
+      }
+    }
+  }
+}

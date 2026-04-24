@@ -17,6 +17,9 @@ pub fn run() {
         install::run_silent_update();
         return;
     }
+    if mode == Mode::SilentInstall {
+        std::process::exit(install::run_silent_install());
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -98,7 +101,7 @@ pub fn run() {
                     let _ = window.set_title("LinkDrive");
                     let _ = window.maximize();
                 }
-                Mode::SilentUpdate => {
+                Mode::SilentUpdate | Mode::SilentInstall => {
                     // Handled earlier (returns before Tauri init). Unreachable.
                 }
             }

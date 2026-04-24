@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>linkdrive</id>
+    <version>0.1.0</version>
+    <packageSourceUrl>https://github.com/MoltenPixelStudio/linkdrive</packageSourceUrl>
+    <owners>MoltenPixelStudio</owners>
+    <title>LinkDrive</title>
+    <authors>MoltenPixelStudio</authors>
+    <projectUrl>https://github.com/MoltenPixelStudio/linkdrive</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/MoltenPixelStudio/linkdrive/main/packages/desktop/src-tauri/icons/icon.png</iconUrl>
+    <licenseUrl>https://github.com/MoltenPixelStudio/linkdrive/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/MoltenPixelStudio/linkdrive</projectSourceUrl>
+    <docsUrl>https://github.com/MoltenPixelStudio/linkdrive#readme</docsUrl>
+    <bugTrackerUrl>https://github.com/MoltenPixelStudio/linkdrive/issues</bugTrackerUrl>
+    <tags>file-manager sftp ssh file-transfer</tags>
+    <summary>Fast cross-device file explorer with VPS + LAN peer access</summary>
+    <description>LinkDrive is a cross-device file explorer for Windows with first-class SFTP / VPS browsing, multi-select transfers with cancel / resume, folder mirroring, bookmarks, SSH config import, and Tailscale peer discovery.</description>
+    <releaseNotes>https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.1.0</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
