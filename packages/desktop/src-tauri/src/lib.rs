@@ -40,6 +40,7 @@ pub fn run() {
             fs_cmds::rename,
             fs_cmds::delete_path,
             fs_cmds::dir_size,
+            fs_cmds::temp_path_for,
             fs_cmds::home_dir,
             // sftp
             sftp::ssh_connect,
@@ -56,6 +57,8 @@ pub fn run() {
             sftp::ssh_dir_size,
             sftp::ssh_download_file,
             sftp::ssh_upload_file,
+            sftp::ssh_download_dir,
+            sftp::ssh_upload_dir,
             // shell
             shell_open::shell_open,
             shell_open::shell_open_with,

@@ -33,6 +33,9 @@ type Ctx = {
   transfers: Transfer[];
   startDownload: (hostId: string, remotePath: string, localPath: string) => string;
   startUpload: (hostId: string, localPath: string, remotePath: string) => string;
+  startDownloadDir: (hostId: string, remotePath: string, localPath: string) => string;
+  startUploadDir: (hostId: string, localPath: string, remotePath: string) => string;
+  waitForTransfer: (id: string) => Promise<Transfer>;
   clearCompleted: () => void;
 };
 
@@ -40,6 +43,9 @@ const TransfersCtx = createContext<Ctx>({
   transfers: [],
   startDownload: () => '',
   startUpload: () => '',
+  startDownloadDir: () => '',
+  startUploadDir: () => '',
+  waitForTransfer: async () => ({}) as Transfer,
   clearCompleted: () => {},
 });
 
@@ -54,6 +60,9 @@ type ProgressEvent = {
 export function TransfersProvider({ children }: { children: ReactNode }) {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const byId = useRef(new Map<string, Transfer>());
+  const waiters = useRef(
+    new Map<string, { resolve: (t: Transfer) => void; reject: (e: Error) => void }>(),
+  );
 
   useEffect(() => {
     let unlisten: undefined | (() => void);
@@ -79,10 +88,28 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
         };
         byId.current.set(id, updated);
         setTransfers((prev) => prev.map((t) => (t.id === id ? updated : t)));
+
+        if (state === 'completed' || state === 'failed') {
+          const w = waiters.current.get(id);
+          if (w) {
+            waiters.current.delete(id);
+            if (state === 'completed') w.resolve(updated);
+            else w.reject(new Error(updated.error ?? 'failed'));
+          }
+        }
       });
     })();
     return () => unlisten?.();
   }, []);
+
+  const waitForTransfer = (id: string): Promise<Transfer> =>
+    new Promise((resolve, reject) => {
+      const cur = byId.current.get(id);
+      if (!cur) return reject(new Error('unknown transfer'));
+      if (cur.state === 'completed') return resolve(cur);
+      if (cur.state === 'failed') return reject(new Error(cur.error ?? 'failed'));
+      waiters.current.set(id, { resolve, reject });
+    });
 
   const startDownload = (hostId: string, remotePath: string, localPath: string): string => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -154,6 +181,84 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
     return id;
   };
 
+  const startDownloadDir = (
+    hostId: string,
+    remotePath: string,
+    localPath: string,
+  ): string => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const t: Transfer = {
+      id,
+      hostId,
+      direction: 'download',
+      src: remotePath,
+      dst: localPath,
+      bytes: 0,
+      total: 0,
+      state: 'running',
+      startedAt: Date.now(),
+    };
+    byId.current.set(id, t);
+    setTransfers((prev) => [t, ...prev]);
+    invoke('ssh_download_dir', {
+      transferId: id,
+      hostId,
+      remotePath,
+      localPath,
+    }).catch((e) => {
+      const existing = byId.current.get(id);
+      if (!existing) return;
+      const updated: Transfer = {
+        ...existing,
+        state: 'failed',
+        error: typeof e === 'string' ? e : (e as Error)?.message ?? 'failed',
+        finishedAt: Date.now(),
+      };
+      byId.current.set(id, updated);
+      setTransfers((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    });
+    return id;
+  };
+
+  const startUploadDir = (
+    hostId: string,
+    localPath: string,
+    remotePath: string,
+  ): string => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const t: Transfer = {
+      id,
+      hostId,
+      direction: 'upload',
+      src: localPath,
+      dst: remotePath,
+      bytes: 0,
+      total: 0,
+      state: 'running',
+      startedAt: Date.now(),
+    };
+    byId.current.set(id, t);
+    setTransfers((prev) => [t, ...prev]);
+    invoke('ssh_upload_dir', {
+      transferId: id,
+      hostId,
+      localPath,
+      remotePath,
+    }).catch((e) => {
+      const existing = byId.current.get(id);
+      if (!existing) return;
+      const updated: Transfer = {
+        ...existing,
+        state: 'failed',
+        error: typeof e === 'string' ? e : (e as Error)?.message ?? 'failed',
+        finishedAt: Date.now(),
+      };
+      byId.current.set(id, updated);
+      setTransfers((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    });
+    return id;
+  };
+
   const clearCompleted = () => {
     for (const [id, t] of byId.current) {
       if (t.state !== 'running') byId.current.delete(id);
@@ -162,7 +267,17 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <TransfersCtx.Provider value={{ transfers, startDownload, startUpload, clearCompleted }}>
+    <TransfersCtx.Provider
+      value={{
+        transfers,
+        startDownload,
+        startUpload,
+        startDownloadDir,
+        startUploadDir,
+        waitForTransfer,
+        clearCompleted,
+      }}
+    >
       {children}
     </TransfersCtx.Provider>
   );

@@ -8,6 +8,10 @@ export function shellOpenWith(path: string): Promise<void> {
   return invoke<void>('shell_open_with', { path });
 }
 
+export function tempPathFor(name: string): Promise<string> {
+  return invoke<string>('temp_path_for', { name });
+}
+
 // Accepts either an extension like ".mp3" (faster, uses system attributes)
 // or a full path. `large` picks the 32x32 icon; otherwise 16x16.
 const ICON_CACHE = new Map<string, string>();

@@ -9,6 +9,7 @@ use russh::keys::PublicKey;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileType, OpenFlags};
 use serde::Serialize;
+use std::path::PathBuf;
 use tauri::Emitter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use sha2::{Digest, Sha256};
@@ -581,6 +582,272 @@ pub async fn ssh_download_file(
         let msg = format!("flush: {e}");
         emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
         return Err(msg);
+    }
+
+    emit_transfer(&app, &transfer_id, sent, total, "completed", None);
+    Ok(())
+}
+
+// Recursively walks a remote directory, streams every file into the mirrored
+// local tree. Progress events sum all file bytes so the drawer shows one
+// aggregate bar per top-level operation.
+#[tauri::command]
+pub async fn ssh_download_dir(
+    app: AppHandle,
+    transfer_id: String,
+    host_id: String,
+    remote_path: String,
+    local_path: String,
+) -> Result<(), String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+
+    // Walk remote to gather total bytes + file list (relative paths).
+    let mut files: Vec<(String, u64)> = Vec::new();
+    let mut dirs_to_create: Vec<String> = vec![String::new()];
+    let mut stack: Vec<String> = vec![String::new()];
+    while let Some(rel) = stack.pop() {
+        let p = if rel.is_empty() {
+            remote_path.clone()
+        } else {
+            join_posix(&remote_path, &rel)
+        };
+        let mut rd = match handle.sftp.read_dir(&p).await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("read_dir {p}: {e}");
+                emit_transfer(&app, &transfer_id, 0, 0, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+        };
+        while let Some(entry) = rd.next() {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let child_rel = if rel.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel}/{name}")
+            };
+            let ft = entry.file_type();
+            let meta = entry.metadata();
+            let type_bits = meta.permissions.map(|m| m & 0o170000);
+            let is_dir = match type_bits {
+                Some(b) => b == 0o040000,
+                None => ft == FileType::Dir,
+            };
+            let is_symlink = match type_bits {
+                Some(b) => b == 0o120000,
+                None => ft == FileType::Symlink,
+            };
+            if is_symlink {
+                continue;
+            }
+            if is_dir {
+                dirs_to_create.push(child_rel.clone());
+                stack.push(child_rel);
+            } else {
+                files.push((child_rel, meta.size.unwrap_or(0)));
+            }
+        }
+    }
+
+    let total: u64 = files.iter().map(|(_, s)| *s).sum();
+    emit_transfer(&app, &transfer_id, 0, total, "running", None);
+
+    // Create all local dirs first.
+    for rel in &dirs_to_create {
+        let local_sub = if rel.is_empty() {
+            PathBuf::from(&local_path)
+        } else {
+            PathBuf::from(&local_path).join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
+        };
+        if let Err(e) = tokio::fs::create_dir_all(&local_sub).await {
+            let msg = format!("mkdir {}: {e}", local_sub.display());
+            emit_transfer(&app, &transfer_id, 0, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+    }
+
+    // Copy each file.
+    let mut sent: u64 = 0;
+    let mut buf = vec![0u8; CHUNK];
+    for (rel, _sz) in &files {
+        let remote_full = join_posix(&remote_path, rel);
+        let local_full = PathBuf::from(&local_path).join(
+            rel.replace('/', std::path::MAIN_SEPARATOR_STR),
+        );
+        let mut remote = match handle
+            .sftp
+            .open_with_flags(&remote_full, OpenFlags::READ)
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                let msg = format!("open {remote_full}: {e}");
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+        };
+        let mut local = match tokio::fs::File::create(&local_full).await {
+            Ok(f) => f,
+            Err(e) => {
+                let msg = format!("create {}: {e}", local_full.display());
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+        };
+        loop {
+            let n = match remote.read(&mut buf).await {
+                Ok(n) => n,
+                Err(e) => {
+                    let msg = format!("read {remote_full}: {e}");
+                    emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                    return Err(msg);
+                }
+            };
+            if n == 0 {
+                break;
+            }
+            if let Err(e) = local.write_all(&buf[..n]).await {
+                let msg = format!("write {}: {e}", local_full.display());
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+            sent += n as u64;
+            emit_transfer(&app, &transfer_id, sent, total, "running", None);
+        }
+        if let Err(e) = local.flush().await {
+            let msg = format!("flush {}: {e}", local_full.display());
+            emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+    }
+
+    emit_transfer(&app, &transfer_id, sent, total, "completed", None);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ssh_upload_dir(
+    app: AppHandle,
+    transfer_id: String,
+    host_id: String,
+    local_path: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let sess = session_for(&app, &host_id).await?;
+    let handle = sess.lock().await;
+
+    // Walk local tree.
+    let mut files: Vec<(String, u64)> = Vec::new();
+    let mut dirs_to_create: Vec<String> = vec![String::new()];
+    let mut stack: Vec<PathBuf> = vec![PathBuf::from(&local_path)];
+    let base = PathBuf::from(&local_path);
+    while let Some(p) = stack.pop() {
+        let mut rd = match tokio::fs::read_dir(&p).await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("read_dir {}: {e}", p.display());
+                emit_transfer(&app, &transfer_id, 0, 0, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+        };
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let path = entry.path();
+            let md = match tokio::fs::symlink_metadata(&path).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if md.file_type().is_symlink() {
+                continue;
+            }
+            let rel = match path.strip_prefix(&base) {
+                Ok(r) => r
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/"),
+                Err(_) => continue,
+            };
+            if md.is_dir() {
+                dirs_to_create.push(rel.clone());
+                stack.push(path);
+            } else {
+                files.push((rel, md.len()));
+            }
+        }
+    }
+
+    let total: u64 = files.iter().map(|(_, s)| *s).sum();
+    emit_transfer(&app, &transfer_id, 0, total, "running", None);
+
+    // Create remote dirs.
+    for rel in &dirs_to_create {
+        let remote_sub = if rel.is_empty() {
+            remote_path.clone()
+        } else {
+            join_posix(&remote_path, rel)
+        };
+        // Ignore 'already exists' errors.
+        let _ = handle.sftp.create_dir(&remote_sub).await;
+    }
+
+    let mut sent: u64 = 0;
+    let mut buf = vec![0u8; CHUNK];
+    for (rel, _sz) in &files {
+        let local_full =
+            PathBuf::from(&local_path).join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let remote_full = join_posix(&remote_path, rel);
+
+        let mut local = match tokio::fs::File::open(&local_full).await {
+            Ok(f) => f,
+            Err(e) => {
+                let msg = format!("open {}: {e}", local_full.display());
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+        };
+        let mut remote = match handle
+            .sftp
+            .open_with_flags(
+                &remote_full,
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+            )
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                let msg = format!("open remote {remote_full}: {e}");
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+        };
+        loop {
+            let n = match local.read(&mut buf).await {
+                Ok(n) => n,
+                Err(e) => {
+                    let msg = format!("read {}: {e}", local_full.display());
+                    emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                    return Err(msg);
+                }
+            };
+            if n == 0 {
+                break;
+            }
+            if let Err(e) = remote.write_all(&buf[..n]).await {
+                let msg = format!("write remote {remote_full}: {e}");
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+                return Err(msg);
+            }
+            sent += n as u64;
+            emit_transfer(&app, &transfer_id, sent, total, "running", None);
+        }
+        if let Err(e) = remote.flush().await {
+            let msg = format!("flush remote {remote_full}: {e}");
+            emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
+            return Err(msg);
+        }
+        let _ = remote.shutdown().await;
     }
 
     emit_transfer(&app, &transfer_id, sent, total, "completed", None);

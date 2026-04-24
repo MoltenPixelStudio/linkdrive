@@ -17,7 +17,7 @@ import type { Entry } from '@linkdrive/shared/types';
 import type { Source } from '../utils/source';
 import { useTransfers } from '../context/TransfersContext';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
-import { shellOpen, shellOpenWith } from '../utils/shell';
+import { shellOpen, shellOpenWith, tempPathFor } from '../utils/shell';
 import {
   DEFAULT_COLUMNS,
   type Column,
@@ -143,7 +143,8 @@ export function Explorer({ source }: { source: Source }) {
     sizeColumnVisible || sort.key === 'size' || groupBy === 'size';
   const folderSizes = useFolderSizes(entries, needsFolderSizes, source.id, source.dirSize);
 
-  const { startDownload, startUpload } = useTransfers();
+  const { startDownload, startUpload, startDownloadDir, startUploadDir, waitForTransfer } =
+    useTransfers();
 
   const ctx = useCtx<Entry | null>();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -295,15 +296,25 @@ export function Explorer({ source }: { source: Source }) {
     setLastSelected(path);
   };
 
-  const onOpen = (e: Entry) => {
+  const onOpen = async (e: Entry) => {
     if (e.isDir) {
       navigate(e.path);
       return;
     }
     if (source.kind === 'local') {
       shellOpen(e.path).catch((err) => alert(`Open failed: ${err}`));
+      return;
     }
-    // Remote non-dirs: future (download to temp then open).
+    // Remote: download to OS temp dir, then open in default app.
+    try {
+      const name = e.path.split('/').pop() || 'file';
+      const dst = await tempPathFor(name);
+      const id = startDownload(source.id, e.path, dst);
+      await waitForTransfer(id);
+      shellOpen(dst).catch((err) => alert(`Open failed: ${err}`));
+    } catch (err) {
+      alert(`Open failed: ${err}`);
+    }
   };
 
   const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -421,7 +432,18 @@ export function Explorer({ source }: { source: Source }) {
   };
 
   const onDownload = async (e: Entry) => {
-    if (source.kind !== 'sftp' || e.isDir) return;
+    if (source.kind !== 'sftp') return;
+    if (e.isDir) {
+      const destDir = await openDialog({
+        multiple: false,
+        directory: true,
+        title: `Download folder ${e.name} to…`,
+      }).catch(() => null);
+      if (typeof destDir !== 'string' || !destDir) return;
+      const sep = destDir.includes('\\') ? '\\' : '/';
+      startDownloadDir(source.id, e.path, `${destDir}${sep}${e.name}`);
+      return;
+    }
     const picked = await saveDialog({
       defaultPath: e.name,
       title: `Download ${e.name}`,
@@ -430,17 +452,54 @@ export function Explorer({ source }: { source: Source }) {
     startDownload(source.id, e.path, picked);
   };
 
+  // Download every currently-selected entry into a single chosen folder.
+  const onDownloadSelection = async () => {
+    if (source.kind !== 'sftp' || selected.size === 0) return;
+    const destDir = await openDialog({
+      multiple: false,
+      directory: true,
+      title: `Download ${selected.size} item(s) to…`,
+    }).catch(() => null);
+    if (typeof destDir !== 'string' || !destDir) return;
+    const sep = destDir.includes('\\') ? '\\' : '/';
+    for (const p of selected) {
+      const entry = visible.find((v) => v.path === p);
+      if (!entry) continue;
+      const localPath = `${destDir}${sep}${entry.name}`;
+      if (entry.isDir) {
+        startDownloadDir(source.id, entry.path, localPath);
+      } else {
+        startDownload(source.id, entry.path, localPath);
+      }
+    }
+  };
+
   const onUpload = async () => {
     if (source.kind !== 'sftp') return;
     const picked = await openDialog({
-      multiple: false,
+      multiple: true,
       directory: false,
-      title: 'Upload file',
+      title: 'Upload files',
+    }).catch(() => null);
+    const list = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : [];
+    for (const localPath of list) {
+      const name = localPath.split(/[\\/]/).pop() ?? 'upload';
+      const remotePath = path.endsWith('/') ? `${path}${name}` : `${path}/${name}`;
+      startUpload(source.id, localPath, remotePath);
+    }
+  };
+
+  const onUploadFolder = async () => {
+    if (source.kind !== 'sftp') return;
+    const picked = await openDialog({
+      multiple: false,
+      directory: true,
+      title: 'Upload folder',
     }).catch(() => null);
     if (typeof picked !== 'string' || !picked) return;
-    const name = picked.split(/[\\/]/).pop() ?? 'upload';
+    const name = picked.split(/[\\/]/).pop() ?? 'uploaded';
     const remotePath = path.endsWith('/') ? `${path}${name}` : `${path}/${name}`;
-    startUpload(source.id, picked, remotePath);
+    startUploadDir(source.id, picked, remotePath);
   };
 
   const menuItemsForEntry = (e: Entry): MenuItem[] => [
@@ -472,12 +531,20 @@ export function Explorer({ source }: { source: Source }) {
       disabled: e.path === path,
       onSelect: () => navigate(dirname(e.path)),
     },
-    ...(source.kind === 'sftp' && !e.isDir
+    ...(source.kind === 'sftp'
       ? [
           {
             id: 'download',
-            label: 'Download…',
-            onSelect: () => onDownload(e),
+            label:
+              selected.size > 1 && selected.has(e.path)
+                ? `Download ${selected.size} items…`
+                : e.isDir
+                  ? 'Download folder…'
+                  : 'Download…',
+            onSelect: () =>
+              selected.size > 1 && selected.has(e.path)
+                ? onDownloadSelection()
+                : onDownload(e),
           } as MenuItem,
         ]
       : []),
@@ -516,8 +583,13 @@ export function Explorer({ source }: { source: Source }) {
       ? [
           {
             id: 'upload',
-            label: 'Upload file…',
+            label: 'Upload files…',
             onSelect: onUpload,
+          } as MenuItem,
+          {
+            id: 'upload-folder',
+            label: 'Upload folder…',
+            onSelect: onUploadFolder,
           } as MenuItem,
         ]
       : []),

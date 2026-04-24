@@ -162,6 +162,23 @@ pub async fn dir_size(path: String) -> Result<u64, String> {
     Ok(total)
 }
 
+// Allocates a unique subdir under the OS temp dir for caching remote files
+// that need to be opened in their default app. Returns the full destination
+// path for the given file name.
+#[tauri::command]
+pub fn temp_path_for(name: String) -> Result<String, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let mut p = std::env::temp_dir();
+    p.push(format!("linkdrive-{stamp}"));
+    std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+    p.push(&name);
+    Ok(p.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 pub fn home_dir() -> Result<String, String> {
     dirs::home_dir()
