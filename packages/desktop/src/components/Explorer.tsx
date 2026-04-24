@@ -696,6 +696,70 @@ export function Explorer({ source }: { source: Source }) {
     ctx.open(e, target);
   };
 
+  // Drag-drop between panes. The payload carries the originating source and
+  // selection; the receiving Explorer translates it to a download or upload
+  // based on whether the source kinds differ.
+  type DragPayload = {
+    sourceKind: Source['kind'];
+    sourceId: string;
+    entries: { path: string; name: string; isDir: boolean }[];
+  };
+  const DRAG_MIME = 'application/x-linkdrive-entries';
+
+  const onDragEntryStart = (ev: React.DragEvent, entry: Entry) => {
+    // If the dragged entry isn't in the selection, drag just that entry.
+    const items =
+      selected.has(entry.path) && selected.size > 0
+        ? visible.filter((v) => selected.has(v.path))
+        : [entry];
+    const payload: DragPayload = {
+      sourceKind: source.kind,
+      sourceId: source.id,
+      entries: items.map((e) => ({ path: e.path, name: e.name, isDir: e.isDir })),
+    };
+    ev.dataTransfer.effectAllowed = 'copy';
+    ev.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
+    ev.dataTransfer.setData('text/plain', items.map((e) => e.path).join('\n'));
+  };
+
+  const onDropEntries = async (ev: React.DragEvent, target: Entry | null) => {
+    const raw = ev.dataTransfer.getData(DRAG_MIME);
+    if (!raw) return;
+    let payload: DragPayload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (payload.sourceKind === source.kind && payload.sourceId === source.id) {
+      // Intra-source drops: no-op for v1. Future: move/copy within same source.
+      return;
+    }
+    const destPath = target?.isDir ? target.path : path;
+
+    if (source.kind === 'sftp' && payload.sourceKind === 'local') {
+      // Uploads into the remote destination folder.
+      for (const item of payload.entries) {
+        const remote = `${destPath.replace(/\/$/, '')}/${item.name}`;
+        if (!(await confirmOverwriteRemote(remote, item.name))) continue;
+        if (item.isDir) startUploadDir(source.id, item.path, remote);
+        else startUpload(source.id, item.path, remote);
+      }
+      return;
+    }
+
+    if (source.kind === 'local' && payload.sourceKind === 'sftp') {
+      // Downloads into the local destination folder.
+      const sep = destPath.includes('\\') ? '\\' : '/';
+      for (const item of payload.entries) {
+        const local = `${destPath.replace(/[\\/]$/, '')}${sep}${item.name}`;
+        if (!(await confirmOverwriteLocal(local, item.name))) continue;
+        if (item.isDir) startDownloadDir(payload.sourceId, item.path, local);
+        else startDownload(payload.sourceId, item.path, local);
+      }
+    }
+  };
+
   return (
     <ExplorerSourceContext.Provider value={source}>
     <div className="flex h-full flex-col bg-ld-body">
@@ -844,6 +908,8 @@ export function Explorer({ source }: { source: Source }) {
               renamingPath={renamingPath}
               onCommitRename={onCommitRename}
               onCancelRename={onCancelRename}
+              onDragEntryStart={onDragEntryStart}
+              onDropEntries={onDropEntries}
             />
           ) : (
             <FileGrid

@@ -124,6 +124,8 @@ export function FileDetails({
   renamingPath,
   onCommitRename,
   onCancelRename,
+  onDragEntryStart,
+  onDropEntries,
 }: {
   entries: Entry[];
   columns: Column[];
@@ -146,6 +148,8 @@ export function FileDetails({
   renamingPath: string | null;
   onCommitRename: (entry: Entry, next: string) => void;
   onCancelRename: () => void;
+  onDragEntryStart?: (e: React.DragEvent, entry: Entry) => void;
+  onDropEntries?: (e: React.DragEvent, target: Entry | null) => void;
 }) {
   const visibleCols = columns.filter((c) => c.visible);
   const gridTemplate = visibleCols
@@ -246,6 +250,18 @@ export function FileDetails({
       ref={outerRef}
       className="flex-1 overflow-auto"
       onContextMenu={(e) => onContextMenu(e, null)}
+      onDragOver={(e) => {
+        if (onDropEntries) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDrop={(e) => {
+        if (onDropEntries) {
+          e.preventDefault();
+          onDropEntries(e, null);
+        }
+      }}
     >
       {/* Column header */}
       <div className="sticky top-0 z-10 bg-ld-body border-b border-ld-border-subtle flex items-stretch text-[11px] font-medium text-ld-text-dim select-none">
@@ -373,6 +389,21 @@ export function FileDetails({
                     <div
                       key={e.path}
                       data-entry-path={e.path}
+                      draggable={!!onDragEntryStart}
+                      onDragStart={(ev) => onDragEntryStart?.(ev, e)}
+                      onDragOver={(ev) => {
+                        if (e.isDir && onDropEntries) {
+                          ev.preventDefault();
+                          ev.dataTransfer.dropEffect = 'copy';
+                        }
+                      }}
+                      onDrop={(ev) => {
+                        if (e.isDir && onDropEntries) {
+                          ev.preventDefault();
+                          ev.stopPropagation();
+                          onDropEntries(ev, e);
+                        }
+                      }}
                       onClick={(ev) => onSelect(e.path, ev)}
                       onDoubleClick={() => onOpen(e)}
                       onContextMenu={(ev) => onContextMenu(ev, e)}
