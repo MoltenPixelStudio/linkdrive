@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, X, Check, Minus } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, X, Check, Minus, StopCircle } from 'lucide-react';
 import { formatBytes } from '@linkdrive/shared/paths';
 import { useTransfers, type Transfer } from '../context/TransfersContext';
 
@@ -48,6 +48,7 @@ export function TransfersDrawer() {
 }
 
 function TransferRow({ t }: { t: Transfer }) {
+  const { cancel } = useTransfers();
   const pct = t.total > 0 ? Math.min(1, t.bytes / t.total) : 0;
   const Icon = t.direction === 'download' ? ArrowDownToLine : ArrowUpFromLine;
   const fileName = (t.direction === 'download' ? t.src : t.src).split('/').pop() || t.src;
@@ -60,6 +61,15 @@ function TransferRow({ t }: { t: Transfer }) {
         <span className="text-[11.5px] text-ld-text truncate flex-1" title={fileName}>
           {fileName}
         </span>
+        {t.state === 'running' && (
+          <button
+            onClick={() => cancel(t.id)}
+            className="p-0.5 rounded hover:bg-ld-elevated text-ld-text-muted hover:text-brand-red"
+            title="Cancel"
+          >
+            <StopCircle size={11} />
+          </button>
+        )}
         {t.state === 'completed' && <Check size={11} className="text-brand-red" />}
         {t.state === 'failed' && <X size={11} className="text-brand-red" />}
       </div>

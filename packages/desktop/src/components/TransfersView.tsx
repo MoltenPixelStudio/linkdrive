@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowUpFromLine, Check, X, Loader2 } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Check, X, Loader2, StopCircle } from 'lucide-react';
 import { formatBytes } from '@linkdrive/shared/paths';
 import { useTransfers, type Transfer } from '../context/TransfersContext';
 
@@ -43,6 +43,7 @@ export function TransfersView() {
 }
 
 function Row({ t }: { t: Transfer }) {
+  const { cancel } = useTransfers();
   const pct = t.total > 0 ? Math.min(1, t.bytes / t.total) : 0;
   const Icon = t.direction === 'download' ? ArrowDownToLine : ArrowUpFromLine;
   const speed = t.speedBps ? `${formatBytes(Math.round(t.speedBps))}/s` : '';
@@ -55,7 +56,18 @@ function Row({ t }: { t: Transfer }) {
         <span className="text-[11.5px] font-semibold text-ld-text">{label}</span>
         <span className="text-[11px] text-ld-text-dim">{t.hostId}</span>
         <div className="flex-1" />
-        {t.state === 'running' && <Loader2 size={12} className="animate-spin text-ld-text-muted" />}
+        {t.state === 'running' && (
+          <>
+            <Loader2 size={12} className="animate-spin text-ld-text-muted" />
+            <button
+              onClick={() => cancel(t.id)}
+              className="text-[10px] text-ld-text-muted hover:text-brand-red px-2 py-0.5 rounded hover:bg-ld-elevated inline-flex items-center gap-1"
+              title="Cancel"
+            >
+              <StopCircle size={11} /> Cancel
+            </button>
+          </>
+        )}
         {t.state === 'completed' && <Check size={12} className="text-brand-red" />}
         {t.state === 'failed' && <X size={12} className="text-brand-red" />}
       </div>

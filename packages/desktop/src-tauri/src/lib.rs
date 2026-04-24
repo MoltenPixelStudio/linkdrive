@@ -4,7 +4,7 @@ mod sftp;
 mod shell_open;
 
 use install::{Mode, ModeState};
-use sftp::SftpPool;
+use sftp::{SftpPool, TransferCancels};
 use shell_open::IconCache;
 use tauri::Manager;
 
@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(ModeState(std::sync::Mutex::new(mode)))
         .manage(SftpPool::default())
+        .manage(TransferCancels::default())
         .manage(IconCache::default())
         .invoke_handler(tauri::generate_handler![
             // mode + install/uninstall
@@ -59,6 +60,7 @@ pub fn run() {
             sftp::ssh_upload_file,
             sftp::ssh_download_dir,
             sftp::ssh_upload_dir,
+            sftp::ssh_cancel_transfer,
             // shell
             shell_open::shell_open,
             shell_open::shell_open_with,

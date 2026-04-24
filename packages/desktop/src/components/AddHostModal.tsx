@@ -7,16 +7,22 @@ import type { Host } from '@linkdrive/shared/types';
 export function AddHostModal({
   onClose,
   onSave,
+  initial,
 }: {
   onClose: () => void;
   onSave: (h: Host) => void;
+  initial?: Host;
 }) {
-  const [name, setName] = useState('');
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState('22');
-  const [user, setUser] = useState('');
-  const [authKind, setAuthKind] = useState<'password' | 'key'>('password');
-  const [keyPath, setKeyPath] = useState('');
+  const [name, setName] = useState(initial?.name ?? '');
+  const [host, setHost] = useState(initial?.host ?? '');
+  const [port, setPort] = useState(String(initial?.port ?? 22));
+  const [user, setUser] = useState(initial?.user ?? '');
+  const [authKind, setAuthKind] = useState<'password' | 'key'>(
+    initial?.auth.type === 'key' ? 'key' : 'password',
+  );
+  const [keyPath, setKeyPath] = useState(
+    initial && initial.auth.type === 'key' ? initial.auth.keyPath ?? '' : '',
+  );
 
   const canSave = name.trim() && host.trim() && user.trim() && port.trim();
 
@@ -33,20 +39,32 @@ export function AddHostModal({
 
   const save = () => {
     if (!canSave) return;
-    const h: Host = {
-      id: `${Date.now()}`,
-      name: name.trim(),
-      host: host.trim(),
-      port: parseInt(port, 10) || 22,
-      user: user.trim(),
-      protocol: 'sftp',
-      auth:
-        authKind === 'password'
-          ? { type: 'password' }
-          : { type: 'key', keyPath: keyPath || undefined, useAgent: false },
-      transport: { mode: 'direct' },
-      createdAt: Date.now(),
-    };
+    const h: Host = initial
+      ? {
+          ...initial,
+          name: name.trim(),
+          host: host.trim(),
+          port: parseInt(port, 10) || 22,
+          user: user.trim(),
+          auth:
+            authKind === 'password'
+              ? { type: 'password' }
+              : { type: 'key', keyPath: keyPath || undefined, useAgent: false },
+        }
+      : {
+          id: `${Date.now()}`,
+          name: name.trim(),
+          host: host.trim(),
+          port: parseInt(port, 10) || 22,
+          user: user.trim(),
+          protocol: 'sftp',
+          auth:
+            authKind === 'password'
+              ? { type: 'password' }
+              : { type: 'key', keyPath: keyPath || undefined, useAgent: false },
+          transport: { mode: 'direct' },
+          createdAt: Date.now(),
+        };
     onSave(h);
   };
 
@@ -54,7 +72,7 @@ export function AddHostModal({
     <div className="fixed inset-0 z-50 bg-ld-overlay flex items-center justify-center animate-fade-in">
       <div className="w-[460px] rounded-2xl border border-ld-border bg-ld-card shadow-2xl animate-scale-in">
         <header className="flex items-center justify-between border-b border-ld-border px-5 h-12">
-          <h3 className="text-sm font-semibold">Add host</h3>
+          <h3 className="text-sm font-semibold">{initial ? 'Edit host' : 'Add host'}</h3>
           <button
             onClick={onClose}
             className="p-1 rounded hover:bg-ld-elevated text-ld-text-muted"

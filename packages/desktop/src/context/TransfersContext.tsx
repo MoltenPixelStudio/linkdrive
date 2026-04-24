@@ -36,6 +36,7 @@ type Ctx = {
   startDownloadDir: (hostId: string, remotePath: string, localPath: string) => string;
   startUploadDir: (hostId: string, localPath: string, remotePath: string) => string;
   waitForTransfer: (id: string) => Promise<Transfer>;
+  cancel: (id: string) => void;
   clearCompleted: () => void;
 };
 
@@ -46,6 +47,7 @@ const TransfersCtx = createContext<Ctx>({
   startDownloadDir: () => '',
   startUploadDir: () => '',
   waitForTransfer: async () => ({}) as Transfer,
+  cancel: () => {},
   clearCompleted: () => {},
 });
 
@@ -259,6 +261,10 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
     return id;
   };
 
+  const cancel = (id: string) => {
+    invoke('ssh_cancel_transfer', { transferId: id }).catch(() => {});
+  };
+
   const clearCompleted = () => {
     for (const [id, t] of byId.current) {
       if (t.state !== 'running') byId.current.delete(id);
@@ -275,6 +281,7 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
         startDownloadDir,
         startUploadDir,
         waitForTransfer,
+        cancel,
         clearCompleted,
       }}
     >

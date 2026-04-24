@@ -14,6 +14,7 @@ use tauri::Emitter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
@@ -28,6 +29,34 @@ pub struct SftpHandle {
 
 #[derive(Default)]
 pub struct SftpPool(pub Mutex<HashMap<String, Arc<Mutex<SftpHandle>>>>);
+
+#[derive(Default)]
+pub struct TransferCancels(pub std::sync::Mutex<HashMap<String, Arc<AtomicBool>>>);
+
+fn register_cancel(app: &AppHandle, id: &str) -> Arc<AtomicBool> {
+    use tauri::Manager;
+    let flag = Arc::new(AtomicBool::new(false));
+    let state = app.state::<TransferCancels>();
+    state.0.lock().unwrap().insert(id.to_string(), flag.clone());
+    flag
+}
+
+fn unregister_cancel(app: &AppHandle, id: &str) {
+    use tauri::Manager;
+    let state = app.state::<TransferCancels>();
+    state.0.lock().unwrap().remove(id);
+}
+
+#[tauri::command]
+pub fn ssh_cancel_transfer(app: AppHandle, transfer_id: String) -> Result<(), String> {
+    use tauri::Manager;
+    let state = app.state::<TransferCancels>();
+    let map = state.0.lock().unwrap();
+    if let Some(flag) = map.get(&transfer_id) {
+        flag.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
 
 // ---- Client handler ----
 
@@ -671,9 +700,15 @@ pub async fn ssh_download_dir(
     }
 
     // Copy each file.
+    let cancel = register_cancel(&app, &transfer_id);
     let mut sent: u64 = 0;
     let mut buf = vec![0u8; CHUNK];
     for (rel, _sz) in &files {
+        if cancel.load(Ordering::SeqCst) {
+            unregister_cancel(&app, &transfer_id);
+            emit_transfer(&app, &transfer_id, sent, total, "failed", Some("cancelled".into()));
+            return Err("cancelled".into());
+        }
         let remote_full = join_posix(&remote_path, rel);
         let local_full = PathBuf::from(&local_path).join(
             rel.replace('/', std::path::MAIN_SEPARATOR_STR),
@@ -699,10 +734,16 @@ pub async fn ssh_download_dir(
             }
         };
         loop {
+            if cancel.load(Ordering::SeqCst) {
+                unregister_cancel(&app, &transfer_id);
+                emit_transfer(&app, &transfer_id, sent, total, "failed", Some("cancelled".into()));
+                return Err("cancelled".into());
+            }
             let n = match remote.read(&mut buf).await {
                 Ok(n) => n,
                 Err(e) => {
                     let msg = format!("read {remote_full}: {e}");
+                    unregister_cancel(&app, &transfer_id);
                     emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
                     return Err(msg);
                 }
@@ -712,6 +753,7 @@ pub async fn ssh_download_dir(
             }
             if let Err(e) = local.write_all(&buf[..n]).await {
                 let msg = format!("write {}: {e}", local_full.display());
+                unregister_cancel(&app, &transfer_id);
                 emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
                 return Err(msg);
             }
@@ -720,11 +762,13 @@ pub async fn ssh_download_dir(
         }
         if let Err(e) = local.flush().await {
             let msg = format!("flush {}: {e}", local_full.display());
+            unregister_cancel(&app, &transfer_id);
             emit_transfer(&app, &transfer_id, sent, total, "failed", Some(msg.clone()));
             return Err(msg);
         }
     }
 
+    unregister_cancel(&app, &transfer_id);
     emit_transfer(&app, &transfer_id, sent, total, "completed", None);
     Ok(())
 }
@@ -792,9 +836,15 @@ pub async fn ssh_upload_dir(
         let _ = handle.sftp.create_dir(&remote_sub).await;
     }
 
+    let cancel = register_cancel(&app, &transfer_id);
     let mut sent: u64 = 0;
     let mut buf = vec![0u8; CHUNK];
     for (rel, _sz) in &files {
+        if cancel.load(Ordering::SeqCst) {
+            unregister_cancel(&app, &transfer_id);
+            emit_transfer(&app, &transfer_id, sent, total, "failed", Some("cancelled".into()));
+            return Err("cancelled".into());
+        }
         let local_full =
             PathBuf::from(&local_path).join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
         let remote_full = join_posix(&remote_path, rel);
