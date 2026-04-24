@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter};
 
 pub const APP_NAME: &str = "LinkDrive";
 pub const MAIN_BINARY: &str = "LinkDrive.exe";
-pub const VERSION: &str = "0.1.0";
+pub const VERSION: &str = "0.2.0";
 pub const PUBLISHER: &str = "MoltenPixelStudio";
 pub const UNINSTALL_KEY: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\com.moltenpixel.linkdrive";

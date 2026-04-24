@@ -6,7 +6,7 @@
 # release. Can be automated via github-actions/winget-releaser.
 
 PackageIdentifier: MoltenPixelStudio.LinkDrive
-PackageVersion: 0.1.0
+PackageVersion: 0.2.0
 PackageLocale: en-US
 Publisher: MoltenPixelStudio
 PublisherUrl: https://github.com/MoltenPixelStudio
@@ -25,17 +25,17 @@ Tags:
   - sftp
   - ssh
   - file-transfer
-ReleaseNotes: See https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.1.0
-ReleaseNotesUrl: https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.1.0
+ReleaseNotes: See https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.2.0
+ReleaseNotesUrl: https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.2.0
 ManifestType: singleton
 ManifestVersion: 1.6.0
 
 Installers:
   - Architecture: x64
     InstallerType: exe
-    InstallerUrl: https://github.com/MoltenPixelStudio/linkdrive/releases/download/v0.1.0/LinkDrive-Setup-0.1.0-win-x64.exe
+    InstallerUrl: https://github.com/MoltenPixelStudio/linkdrive/releases/download/v0.2.0/LinkDrive-Setup-0.2.0-win-x64.exe
     # Replace with actual SHA256 of the release asset on each bump:
-    InstallerSha256: REPLACE_WITH_RELEASE_ASSET_SHA256
+    InstallerSha256: ACF21D97E6329F88B708FA9BD54123B637A73A819D0DA73150E7A423E4213D26
     InstallerSwitches:
       Silent: --silent-install
       SilentWithProgress: --silent-install

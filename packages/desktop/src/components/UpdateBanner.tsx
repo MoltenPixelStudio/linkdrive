@@ -5,7 +5,7 @@ import { shellOpen } from '../utils/shell';
 
 // Current app version — mirror the one in Cargo.toml / tauri.conf.json.
 // Bump here when shipping a new tag so the banner stops firing.
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 const RELEASES_API =
   'https://api.github.com/repos/MoltenPixelStudio/linkdrive/releases/latest';
 const DISMISS_KEY = 'linkdrive.update.dismissed';
