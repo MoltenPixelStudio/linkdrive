@@ -1,6 +1,6 @@
 [package]
 name = "linkdrive"
-version = "0.2.0"
+version = "0.2.1"
 description = "LinkDrive — fast cross-device file explorer"
 authors = ["redakarimi"]
 edition = "2021"

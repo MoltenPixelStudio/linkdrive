@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
 PackageIdentifier: MoltenPixelStudio.LinkDrive
-PackageVersion: 0.2.0
+PackageVersion: 0.2.1
 PackageLocale: en-US
 Publisher: MoltenPixelStudio
 PublisherUrl: https://github.com/MoltenPixelStudio
@@ -19,7 +19,7 @@ Tags:
   - sftp
   - ssh
   - file-transfer
-ReleaseNotes: See https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.2.0
-ReleaseNotesUrl: https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.2.0
+ReleaseNotes: See https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.2.1
+ReleaseNotesUrl: https://github.com/MoltenPixelStudio/linkdrive/releases/tag/v0.2.1
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0
